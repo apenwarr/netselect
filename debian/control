@@ -1,0 +1,16 @@
+Source: netselect
+Section: net
+Priority: optional
+Maintainer: Avery Pennarun <apenwarr@debian.org>
+Standards-Version: 2.4.1
+
+Package: netselect
+Architecture: i386
+Depends: ${shlibs:Depends}
+Description: Choose the fastest server automatically.
+ .
+ This is netselect, an ultrafast intelligent parallelizing binary-search
+ implementation of "ping."  You give it a (possibly very long) list of
+ servers, and it chooses the fastest/closest one automatically.  It's good
+ for finding the fastest ftp.debian.org mirror, the least laggy IRC server,
+ or the best Squid neighbour.

@@ -1,5 +1,5 @@
-BINDEST = /usr/local/bin
-MANDEST = /usr/local/man/man8
+BINDEST = ${BASEDIR}/usr/local/bin
+MANDEST = ${BASEDIR}/usr/local/man/man8
 
 CFLAGS = -O2 -Wall -I. -g
 LDFLAGS = -g
@@ -10,8 +10,10 @@ netselect: netselect.o
 	-sudo chown root netselect && sudo chmod +s netselect
 
 install: $(PROG)
-	install -s -o root -g root -m 4755 netselect ${BASEDIR}$(BINDEST)
-	install -o root -g root -m 0644 netselect.8 ${BASEDIR}$(MANDEST)
+	install -d ${BINDEST}
+	install -d ${MANDEST}
+	install -s -o root -g root -m 4755 netselect $(BINDEST)
+	#install -o root -g root -m 0644 netselect.8 $(MANDEST)
 
 clean:
-	$(RM) netselect *.o *~
+	$(RM) netselect *.o *~ build-stamp

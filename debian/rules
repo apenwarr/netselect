@@ -1,0 +1,59 @@
+#!/usr/bin/make -f
+# 							-*- makefile -*-
+# debian.rules file for the Debian/GNU Linux apmd package
+# Copyright 1996-98 by Dirk Eddelbuettel <edd@debian.org>
+# And fiddled with by Avery Pennarun for use with netselect
+
+package	= netselect
+debtmp	:= $(shell pwd)/debian/tmp
+
+#export DH_VERBOSE=1
+
+build: build-stamp
+build-stamp:
+	dh_testdir
+	#./configure --prefix=/usr  
+	$(MAKE)
+	touch build-stamp
+
+clean:
+	dh_testdir
+	dh_testroot
+	rm -f build-stamp
+	-$(MAKE) clean
+	dh_clean
+
+binary-indep: build
+
+binary-arch: build
+#	dh_testversion
+	dh_testdir
+	dh_testroot
+	dh_clean -k
+	dh_installdirs
+	$(MAKE) BASEDIR=`pwd`/debian/tmp install
+	dh_installdocs			README HISTORY
+#	dh_installmenu
+#	dh_installinit			--noscripts
+#	dh_installcron
+#	dh_installmanpages
+#	dh_undocumented
+	dh_installexamples		debian-ftp-mirrors
+	dh_installchangelogs		ChangeLog
+	dh_strip
+	dh_compress
+	dh_fixperms
+	dh_suidregister
+	dh_installdeb
+	dh_shlibdeps
+	dh_gencontrol
+#	dh_makeshlibs
+#	dh_md5sums
+	dh_builddeb
+
+source diff:                                                                  
+	@echo >&2 'source and diff are obsolete - use dpkg-source -b'; false
+
+binary: binary-indep binary-arch
+.PHONY: build clean binary-indep binary-arch binary
+

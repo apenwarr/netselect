@@ -1,0 +1,11 @@
+netselect (0.2-1) unstable; urgency=low
+
+  * Packaging my new program, "netselect," which chooses the fastest of
+    a set of servers automatically.
+
+ -- Avery Pennarun <apenwarr@debian.org>  Tue,  8 Sep 1998 02:49:57 -0400
+
+
+Local variables:
+mode: debian-changelog
+End:      

@@ -1,0 +1,27 @@
+
+This ChangeLog is kept automatically by CVS.
+
+  (apenwarr) Tue Sep 08 03:05:21 EDT 1998
+	Added debianization stuff.
+
+  (apenwarr) Tue Sep 08 02:48:47 EDT 1998
+	Directory /netselect/debian added to the repository
+
+  (apenwarr) Tue Sep 08 02:45:55 EDT 1998
+	Updated README.  Fixed a few display buglets.
+
+  (apenwarr) Tue Sep 08 02:31:11 EDT 1998
+	Added '-s' option, to "select" the best few servers automatically.
+
+  (apenwarr) Tue Sep 08 02:01:47 EDT 1998
+	Added parallel DNS resolving (MUCH faster).  Dramatically increased
+	"fairness" in testing -- lag time and %thruput calculations are much
+	closer to reality.
+
+  (apenwarr) Mon Sep 07 22:37:58 EDT 1998
+	Added the ChangeLog file.
+
+Release 0.1 (1998 06 25)
+-----------
+ - Initial release.
+ 

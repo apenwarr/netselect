@@ -1,9 +1,9 @@
 
-netselect 0.1
+netselect 0.2
 =============
 
 This is netselect, an ultrafast intelligent parallelizing binary-search
-implementation of "traceroute."
+implementation of "ping."
 
 Now stop laughing and pay attention.
 
@@ -11,28 +11,35 @@ netselect determines several facts about all of the hosts given on the
 command line, much faster you would if you manually tried to use ping and
 traceroute.  For example, if I type:
 
-	netselect -v ftp.fceia.unr.edu.ar ftp.kulnet.kuleuven.ac.be \
+	netselect -vv ftp.fceia.unr.edu.ar ftp.kulnet.kuleuven.ac.be \
 			ftp.cdrom.com ftp.debian.org ftp.de.debian.org
 			
 It tells me this:
 
-ftp.fceia.unr.edu.ar                   422 ms   19 hops   40% ok ( 2/ 5)
-ftp.kulnet.kuleuven.ac.be             9999 ms   30 hops    0% ok
-ftp.cdrom.com                          215 ms   13 hops   89% ok (17/19)
-ftp.debian.org                         194 ms   20 hops   50% ok ( 3/ 6)
-ftp.de.debian.org                      276 ms   15 hops   66% ok ( 6/ 9)
-
+ftp.fceia.unr.edu.ar                  2792 ms  23 hops  100% ok ( 1/ 1) [ 9213]
+ftp.kulnet.kuleuven.ac.be             9999 ms  30 hops    0% ok
+ftp.cdrom.com                           94 ms   8 hops  100% ok (10/10) [  169]
+ftp.debian.org                          46 ms  15 hops  100% ok (10/10) [  115]
+ftp.de.debian.org                     9999 ms  30 hops    0% ok
+  115 ftp.debian.org
+  
 For each host, it figures out the approximate ping time (though not as
 accurately as "ping" does), the number of network "hops" to reach the
-target, and the percentage of ping requests that got through successfully.
+target, and the percentage of ping requests that got through successfully. 
 
-Note that for ftp.kulnet.kuleuven.ac.be in this case, nothing got through at
-all.  That indicates that either the host doesn't exist, or it is down.
+The value in brackets is the "score" of each operational host based on these
+values.  A lower score is better.  The last line shows the server with the
+best score.  If we had not used '-vv' on the command line, only this last
+line would have been printed.
+
+Note that for ftp.kulnet.kuleuven.ac.be and ftp.de.debian.org in this case,
+nothing got through at all.  That indicates that either the host doesn't
+exist, or it is down.
 
 For a bigger example, I've included the file debian-ftp-mirrors, which is a
 partially up-to-date list of Debian Linux FTP site mirrors.  Try this:
 
-	netselect -vv $(cat debian-ftp-mirrors)
+	netselect -vvv $(cat debian-ftp-mirrors)
 
 
 But Why?
@@ -40,37 +47,26 @@ But Why?
 
 Why do I want to know about my ping times to computers in Belgium?  Well,
 the main reason for netselect -- and its name gives you a hint -- is to help
-choose the "best" server for you from among a (possibly very large) list. 
-netselect doesn't actually do the choosing for you; you have to take its
-statistics and make decisions yourself.  Do you want:
+choose the "best" server for you from among a (possibly very large) list.
 
-	- maximum long-term stability?
-	    If there are fewer hops from them to you, there is less
-	    likelihood that someone in the middle will go down.
+Starting with version 0.2, netselect can make these decisions for you using
+its scoring mechanism.  If you want, however, you can still pass the raw
+results and score the servers as you like.  Try this, for example:
 
-	- minimum telnet or irc delay?
-	    The shortest ping time will result in the least lag, as long as
-	    your packet loss isn't too high.
-
-	- fastest throughput?
-	    It's very important to find a site with a very low packet loss. 
-	    After that, ping time will give you a clue.
-	    
-Someday, maybe programs will help make these decisions for you.  Until then,
-you have to look at the data and decide for yourself.  But it's better than
-making a completely uninformed guess.
+	netselect -vv -s 0 $(cat debian-ftp-mirrors)
+	
+The "-s 0" option disables printing of scores at the bottom of the list, and
+"-vv" enables printing of the statistics.
 
 
 How does it work?
 =================
 
-I don't have much time to write this right now, so I'll give you the short
-story.
-
 First:
 
  - decode each hostname into an IP address, and stores each IP address into
-   a table.  This is actually the slowest part.
+   a table.  In netselect 0.2, this code was rewritten to resolve hostnames
+   much more quickly than before.
    
 Now for all hosts at once:
    
@@ -87,8 +83,8 @@ Now for all hosts at once:
    host.  Packets that don't come back are considered lost.
 
 When all the hosts have had their TTL values narrowed down, and the "-t"
-timeout option has expired, we're done.  Close the sockets and dump the
-statistics to stdout.
+minimum tries have expired, we're done.  Close the sockets and dump
+the statistics to stdout.
 
 
 
@@ -102,32 +98,30 @@ Not much right now.
 		   bored waiting for a hundred name resolutions to finish.
 		   
 	-vv	-- very verbose mode.  Displays nameserver resolution and
-		   play-by-play messages to stderr.
+		   statistics (not just scores) to stderr and stdout.
+		   
+	-vvv	-- very very verbose mode.  Everything -vv prints, plus
+		   print every packet received as it happens.  Good for
+		   debugging or trying to figure out how it works.
 		   
 	-m #	-- maximum ttl.  Don't accept hosts with more hops than
 		   this.
 		   
-	-t #	-- make sure the test runs for at least the specified number
-		   of seconds.  This is a hack, actually.
-
-In all cases, statistics are written to stdout when the program is done. 
-"-vv" is most interesting to watch.
+	-t #	-- make sure at least 50% of the hosts get tested with this
+		   many packets.  The more packets you use, the more
+		   accurate the results... and the longer it takes to run.
+		   The default is 10, which is usually okay.
+	
+	-s #	-- print this many "top-scoring" servers at the end of
+		   the list.  "-s 0" disables printing of high scores.
 
 
 The Future
 ==========
 
-I didn't actually have time to write this program, and probably don't have
-time to improve it either.  But if I did, there are several things that
-would be nice to have:
 
-	- replace '-t' option with something to make sure each host gets the
-	  same number of requests.  The current way isn't fair at all --
-	  some hosts get 30 requests, and some get two.  The "% ok" feature
-	  is pretty inaccurate because of this.
+Here are some possible improvements:
 
-	- parallelize nameserver lookups too.  Those are really slow!
-	
 	- try to estimate line bandwidth somehow.  The 'bing' program does
 	  it using two different ping packet sizes.
 
