@@ -1,0 +1,21 @@
+
+This program was adapted by Avery Pennarun from the traceroute program by
+Van Jacobson, which had been subsequently ported to Linux by Matt Day
+<mday@artisoft.com>.  traceroute was released under the BSD license, and
+thus so is this program.
+
+The README.linux in traceroute said the following:
+
+	This is a port of 4.4BSD traceroute for Linux.
+
+	This version of traceroute also includes a fix for a bug that could
+	cause traceroute to hang indefinitely in certain cases.  See the
+	wait_for_reply() function in traceroute.c for details.
+
+	The supplied binary was compiled on Linux 1.1.49 with gcc 2.5.8.
+
+	Note that the kernel modification mentioned in the README is not
+	needed on Linux.
+
+	Matt Day <mday@artisoft.com>
+
