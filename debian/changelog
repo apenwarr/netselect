@@ -1,3 +1,51 @@
+netselect (0.3-1) unstable; urgency=low
+  
+  * New upstream version with many bug fixes.  closes: #56432, #71836.
+  
+  * Added a new netselect-apt script, which downloads the list of mirrors
+     automatically.  Thus we don't need the long-outdated debian-ftp-mirrors
+     example file.  closes: #61747, #66827, #67200, #71836.
+    
+  * Removed blank line from package description.  closes: #109451.
+  
+  * Removed dh_suidregister and added a Conflicts: with the old suidregister
+     package.
+
+ -- Avery Pennarun <apenwarr@debian.org>  Wed, 29 Aug 2001 05:27:08 -0400
+
+
+netselect (0.2-5) frozen unstable; urgency=low
+
+  * Rebuilt for with another new debhelper and proper packaging for a setuid
+     program (not a security hole); fixes bug#54760.
+
+  * Updated to "new BSD" license without the advertising clause.
+
+ -- Avery Pennarun <apenwarr@debian.org>  Wed, 17 May 2000 23:40:43 -0400
+
+
+netselect (0.2-4) unstable; urgency=low
+
+  * Rebuilt for potato with new debhelper.
+
+ -- Avery Pennarun <apenwarr@debian.org>  Thu,  6 Jan 2000 21:18:32 -0500
+
+
+netselect (0.2-3) unstable; urgency=low
+
+  * set architecture to 'any' instead of 'i386' in the control file.
+     (thanks to Chris Chemelis <chris@beezer.med.miami.edu> for this one)
+
+ -- Avery Pennarun <apenwarr@debian.org>  Thu, 10 Sep 1998 14:43:40 -0400
+
+
+netselect (0.2-2) unstable; urgency=low
+
+  * files were installing into /usr/local -- oops.
+
+ -- Avery Pennarun <apenwarr@debian.org>  Thu, 10 Sep 1998 13:30:06 -0400
+
+
 netselect (0.2-1) unstable; urgency=low
 
   * Packaging my new program, "netselect," which chooses the fastest of

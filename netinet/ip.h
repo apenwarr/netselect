@@ -68,7 +68,11 @@ struct ip {
 	struct	in_addr ip_src,ip_dst;	/* source and dest address */
 };
 
+#ifdef __EMX__
+#define IP_MAXPACKET	32767		/* OS/2 maximum packet size	*/
+#else
 #define	IP_MAXPACKET	65535		/* maximum packet size */
+#endif
 
 /*
  * Definitions for IP type of service (ip_tos)

@@ -12,7 +12,6 @@ debtmp	:= $(shell pwd)/debian/tmp
 build: build-stamp
 build-stamp:
 	dh_testdir
-	#./configure --prefix=/usr  
 	$(MAKE)
 	touch build-stamp
 
@@ -29,27 +28,35 @@ binary-arch: build
 #	dh_testversion
 	dh_testdir
 	dh_testroot
+	dh_installdebconf
 	dh_clean -k
 	dh_installdirs
-	$(MAKE) BASEDIR=`pwd`/debian/tmp install
-	dh_installdocs			README HISTORY
+	$(MAKE) PREFIX=`pwd`/debian/tmp/usr \
+		MANDEST=`pwd`/debian/tmp/usr/share/man install
+	dh_installdocs	README README.OS2 README.traceroute HISTORY
 #	dh_installmenu
-#	dh_installinit			--noscripts
+#	dh_installinit	--noscripts
 #	dh_installcron
 #	dh_installmanpages
-#	dh_undocumented
-	dh_installexamples		debian-ftp-mirrors
+	dh_undocumented
+	#dh_installexamples		debian-ftp-mirrors
 	dh_installchangelogs		ChangeLog
 	dh_strip
+	dh_link
 	dh_compress
+	echo x1; ls -l debian/tmp/usr/bin
+	#dh_suidregister
+	echo x2; ls -l debian/tmp/usr/bin
 	dh_fixperms
-	dh_suidregister
+	chmod u+s debian/tmp/usr/bin/netselect
 	dh_installdeb
 	dh_shlibdeps
 	dh_gencontrol
 #	dh_makeshlibs
 #	dh_md5sums
+	echo x3; ls -l debian/tmp/usr/bin
 	dh_builddeb
+	echo x4; ls -l debian/tmp/usr/bin
 
 source diff:                                                                  
 	@echo >&2 'source and diff are obsolete - use dpkg-source -b'; false

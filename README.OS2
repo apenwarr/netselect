@@ -1,0 +1,95 @@
+
+
+The OS/2 support is from Kyosuke TOKORO <tokoro@mx5.harmonix.ne.jp> (or
+maybe NBG01720@nifty.ne.jp).
+
+Thanks!
+
+Avery
+
+P.S. There's a great chance that I might have broken it since then.  Send me
+patches if you want it back.  Also send me patches if you want it to work on
+non-Linux Unix systems - it should be pretty easy to do.
+
+
+
+netselect.c
+~~~~~~~~~~~
+o Removed htons() to set the `ip_len' element.
+
+    This function causes the netselect.exe to hung.  It is not required
+  to set the `ip_len' on the OS/2 systems (and on the BSD systems, I
+  think.)
+
+
+o Added code to check the `EHOSTUNREACH' error and some others.	 They may
+  be returned from sendto().
+
+
+o Added _response() to expand a response file (@filename, the file filename
+  contains a list of arguments, one per line).
+
+    `netselect $(cat foo)' does not work when the shell is CMD.EXE.  Type
+  `netselect @foo' instead.
+
+    _response() is an orignail function supported by the `emx.'
+
+
+o Switch the mode of an unnamed pipe to binary from text (default).
+
+    On the OS/2 and the Windows operating systems, if pipe handle has been
+  created for reading in text mode, CR/LF pairs are translated to newline
+  characters and a Ctrl-Z character is discarded.  And, if pipe has been
+  created for writing in text mode, newline characters are translated to
+  CR/LF pairs.	These translations cause problem.
+
+
+netinet/ip.h
+~~~~~~~~~~~~
+    I don't know why the netselect has own `netinet/' headers.
+    May I compile the netselect with including standard headers in `/usr
+  /include/netinet/ (on the Debian GNU linux systems)' directory?
+
+    I compiled for the OS/2 systems with including the netselect's own
+  `netinet/' headers, instead of the headers in `/emx/include/netinet/'
+  directory.
+
+o The size of network messages is restricted to 32767 bytes.  This is a
+  limitation of IBM TCP/IP for OS/2.
+
+
+Makefile
+~~~~~~~~
+o To build OS/2 binary, type:
+	make OS2=1
+
+
+o To install on OS/2 system, type:
+	make OS2=1 install
+
+    GNU fileutil is required.  But, `install -s netselect.exe' does not
+  work correctly.  Because the OS/2 executable file is not in the a.out
+  format.  `emxbind -s -b' will be executed to delete symbols and to
+  create bound an `.exe' file.
+
+
+o `# (comment)' characters are moved to the top of each line.
+
+    When there is a tab character at the top of the line, GNU make executes
+  the shell.  When the shell is `/bin/sh' or something ported from unix.
+    a `#' starts a comment that extends to the end of the line.	 But, the
+  native OS/2 shell (CMD.EXE) does not recognize `#' as a comment.  To
+  resolve this problem, use the Makefile comments, instead of the shell
+  comments.  When there is a `#' character at the top of line, GNU make
+  recognizes its line as own comment, and does not execute shell.
+
+
+o fork() works only in programs linked by ld.  It does not work in programs
+  linked by LINK386 (OS/2 native linker).  This is a limitation of the
+  emx.
+
+
+debian-ftp-mirrors
+~~~~~~~~~~~~~~~~~~
+o Added Debian mirrors in Japan.
+

@@ -1,0 +1,105 @@
+#!/bin/bash
+#
+# A script to create an apt sources.list file automatically by downloading
+# the list of Debian mirrors and choosing the fastest main and non-us server
+# using netselect.
+#
+# Author: Avery Pennarun <apenwarr@debian.org>
+#
+# License: public domain.  Please feel free to improve this script.  It
+# doesn't really belong in the netselect package, particularly since the
+# netselect package doesn't depend on wget and this script does.  If you
+# feel like merging this into another package, or creating a new package,
+# please do.  Then tell me, so I can remove it from the netselect package.
+#
+# TO DO:
+#   - parse command line options for output file, input files, etc.
+#   - have some way to pass options (especially -t) to netselect.
+#   - test the generated files automatically.  Some mirrors in the list
+#       are broken.  We should at least verify that the Packages and Sources
+#       files exist and aren't ancient.
+#   - maybe generate redundant entries, in case one server is missing files?
+#
+#
+
+URL="http://www.debian.org/mirror/mirrors_full"
+DISTRO="$1"
+
+log()
+{
+	echo "$@" >&2
+}
+
+run_netselect()
+{
+	SEARCH="$1"
+
+	netselect -v -s 1 $(cat mirrors_full \
+	    | perl -n -e '
+	    	if (m{^'"$SEARCH"':.*<a href="(http://.*?)">}) {
+			print("$1\n");
+		}') \
+	    | awk '{print $2}'
+}
+
+if [ -z "$1" ]; then
+	log "You didn't provide a distribution name (usually 'stable', "
+	log "'testing', or 'unstable') on the command line.  We'll use "
+	log "'stable' by default."
+	log
+	DISTRO=stable
+fi
+
+if [ ! -f mirrors_full -a ! -e /usr/bin/wget ]; then
+	log "Sorry, this script requires the 'wget' package in order to run."
+	log "You can also download the mirrors list yourself and leave it"
+	log "in the current directory:"
+	log "        $URL"
+	exit 1
+fi
+
+if [ ! -f mirrors_full ]; then
+	log "Retrieving the list of mirrors from www.debian.org..."
+	log
+
+	if ! wget "$URL"; then
+		log "$0: wget failed.  Please try to correct the problem"
+		log "by reading the wget messages printed above."
+		exit 2
+	fi
+else
+	log "There is a already a mirrors_full file in the current"
+	log "directory.  I'll use that, rather than downloading it again."
+	log
+fi
+
+log "Choosing a main Debian mirror using netselect."
+MAIN=$(run_netselect "Packages over HTTP")
+log "The fastest server seems to be:"
+log "        $MAIN"
+log
+
+log "Choosing a non-US Debian mirror using netselect."
+NON_US=$(run_netselect "Non-US packages over HTTP")
+log "The fastest non-US server seems to be:"
+log "        $NON_US"
+log
+
+log "Writing the sources.list in the current directory."
+
+rm -f sources.list
+
+(
+	echo "# the main Debian packages.  Uncomment the deb-src line if you"
+	echo "# want 'apt-get source' to work with most packages."
+	echo "deb $MAIN $DISTRO main contrib non-free"
+	echo "# deb-src $MAIN $DISTRO main contrib non-free"
+	
+	echo
+	echo "# the non-US Debian packages.  Uncomment the deb-src line if you"
+	echo "# want 'apt-get source' to work with non-US packages."
+	echo "deb $NON_US $DISTRO/non-US main contrib non-free"
+	echo "# deb-src $NON_US $DISTRO/non-US main contrib non-free"
+) >sources.list
+
+echo "Done."

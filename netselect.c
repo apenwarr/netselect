@@ -1,6 +1,6 @@
 /*
  * Netselect:
- *      Copyright (c) 1998 by Avery Pennarun <apenwarr@worldvisions.ca>
+ *      Copyright (c) 1998-2001 by Avery Pennarun <apenwarr@worldvisions.ca>
  *
  * Traceroute:
  * Copyright (c) 1990, 1993
@@ -17,11 +17,7 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
- * 3. All advertising materials mentioning features or use of this software
- *    must display the following acknowledgement:
- *	This product includes software developed by the University of
- *	California, Berkeley and its contributors.
- * 4. Neither the name of the University nor the names of its contributors
+ * 3. Neither the name of the University nor the names of its contributors
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -39,25 +35,31 @@
  */
 
 /*
- * Expect this to only compile on Linux.  If it works on your system, hey,
- * great!  Let me know. -- apenwarr
+ * I expect this to only compile on Linux.  If it also works on your system,
+ * hey, great!  Let me know. -- apenwarr
  */
+
+#ifdef __EMX__
+# include <io.h>
+# include <fcntl.h>
+# include <sys/types.h>
+# include <sys/select.h>
+# include <machine/endian.h>
+#else
+# include <endian.h>
+#endif
 
 #include <sys/param.h>
 #include <sys/time.h>
 #include <sys/socket.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
-
-#include <endian.h>
 #include <netinet/in_systm.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
 #include <netinet/udp.h>
-
 #include <arpa/inet.h>
-
 #include <netdb.h>
 #include <stdio.h>
 #include <errno.h>
@@ -66,8 +68,9 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <signal.h>
+#include <time.h>
 
-#define	MAXPACKET	65535	/* max ip packet size */
+#define MAXPACKET	IP_MAXPACKET	/* max ip packet size */
 #ifndef MAXHOSTNAMELEN
 #define MAXHOSTNAMELEN	64
 #endif
@@ -75,25 +78,23 @@
 /*
  * format of a (udp) probe packet.
  */
-struct opacket
+typedef struct
 {
     struct ip ip;
     struct udphdr udp;
     u_char seq;			/* sequence number of this packet */
     u_char ttl;			/* ttl packet left with */
     struct timeval tv;		/* time packet left */
-};
+} OPacket;
 
 
 /* 
  * currently-known information about a host
  */
-struct hostdata
+typedef struct
 {
     char *hostname;		/* hostname as provided on command line */
-
-    pid_t resolver_pid; 	/* >0 if DNS lookup in progress */
-    int resolver_done;		/* !=0 if resolver finished */
+    char *shortname;		/* hostname with any URL-type stuff removed */
     struct sockaddr_in addr;	/* remote address */
 
     int invalid;		/* !=0 if we discard this host */
@@ -107,25 +108,30 @@ struct hostdata
     struct timeval send_time;	/* time of transmission */
     int code;			/* ICMP error code returned */
     u_short seq;		/* sequence number sent with packet */
-};
+} HostData;
 
 
 /* prototypes for functions in this file */
-static void set_up_host(struct hostdata *host, char *hostname, int max_ttl);
-static int name_resolver(struct hostdata *hosts, int numhosts);
+static HostData *add_host(HostData *host, int *numhosts,
+			  char *hostname, struct sockaddr_in *addr,
+			  int max_ttl);
+static char *un_url(char *orig);
+static char *fix_url(char *orig, char *hostname);
+static HostData *name_resolver(int *numhosts, int numnames, char **names,
+			       int max_ttl);
 
-static void send_probe(int seq, int ttl, struct opacket *op,
-		       struct hostdata *host);
+static void send_probe(int seq, int ttl, OPacket *op,
+		       HostData *host);
 static time_t deltaT(struct timeval *t1p, struct timeval *t2p);
-static struct hostdata *wait_for_reply(struct hostdata *hosts, int numhosts,
+static HostData *wait_for_reply(HostData *hosts, int numhosts,
 				       int sock, int msec_timeout);
-static struct hostdata *packet_ok(struct hostdata *hosts, int numhosts,
+static HostData *packet_ok(HostData *hosts, int numhosts,
 				  u_char *buf, int cc,
 				  struct sockaddr_in *from);
-static int choose_ttl(struct hostdata *host);
+static int choose_ttl(HostData *host);
 static void usage();
-static void results(struct hostdata *hosts, int numhosts, int num_score);
-static int host_score(struct hostdata *host);
+static void results(HostData *hosts, int numhosts, int num_score);
+static int host_score(HostData *host);
 
 #define INPACKET_SIZE    512
 
@@ -138,16 +144,19 @@ static int verbose = 0;
 static u_short ident;
 static u_short port = 32768 + 666; /* start udp dest port for probe packets */
 
+static int validhosts;
+
 int main(int argc, char **argv)
 {
     extern char *optarg;
     extern int optind;
-    int hostcount, ch, seq, ttl, max_ttl = 30, min_tries = 10, num_score = 1;
+    int hostcount, startcount, endcount = 0, sent_one, lag, min_lag = 100;
+    int ch, seq, ttl, max_ttl = 30, min_tries = 10, num_score = 1;
     struct timeval now;
     struct timezone tz;
-    struct opacket outpacket;          /* last output (udp) packet */
-    struct hostdata *host, *hosts;
-    int numhosts, validhosts, delay, must_continue;
+    OPacket outpacket;          /* last output (udp) packet */
+    HostData *host, *hosts;
+    int numhosts, delay, must_continue, count;
 
     if ((rcvsock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) < 0
      || (sndsock = socket(AF_INET, SOCK_RAW, IPPROTO_RAW )) < 0)
@@ -161,6 +170,9 @@ int main(int argc, char **argv)
 
     seq = 0;
 
+#ifdef __EMX__
+    _response(&argc,&argv);
+#endif
     while ((ch = getopt(argc, argv, "s:t:m:v?")) != EOF)
     {
 	switch (ch)
@@ -207,65 +219,83 @@ int main(int argc, char **argv)
 	return 1;
     }
     
-    memset(&outpacket, 0, sizeof(struct opacket));
+    memset(&outpacket, 0, sizeof(OPacket));
     outpacket.ip.ip_tos = 0;
     outpacket.ip.ip_v = IPVERSION;
     outpacket.ip.ip_id = 0;
 
     ident = (getpid() & 0xffff) | 0x8000;
-    hosts = (struct hostdata *)calloc(argc, sizeof(struct hostdata));
     
-    validhosts = 0;
+    validhosts = numhosts = 0;
     
-    for (numhosts = 0; numhosts < argc; numhosts++)
-	set_up_host(hosts + numhosts, argv[numhosts], max_ttl);
+    hosts = name_resolver(&numhosts, argc, argv, max_ttl);
+    validhosts = numhosts;
     
-    validhosts = name_resolver(hosts, numhosts);
+    if (verbose >= 1)
+	fprintf(stderr, "Running netselect to choose %d out of %d address%s.\n",
+		num_score, numhosts, numhosts==1 ? "" : "es");
     
+    /* keep going until most of the hosts have been finished */
     must_continue = numhosts;
     while (must_continue && must_continue >= numhosts/2)
     {
 	gettimeofday(&now, &tz);
 	
 	must_continue = 0;
-	
-	for (hostcount = 0, host = hosts;
-	     hostcount < numhosts;  hostcount++, host++)
+
+	/* send out a packet; if there are no interesting packets to send
+	 * out, make sure we only loop once through the list of hosts.
+	 * Also make sure that next time we start the loop, we pick up
+	 * at the host where we left off, rather than starting over; this
+	 * increases fairness.
+	 */
+	startcount = hostcount = endcount;
+	sent_one = 0;
+	do
 	{
+	    hostcount = (hostcount + 1) % numhosts;
+	    host = &hosts[hostcount];
+	    
 	    if (!host->invalid && !host->done
 		&& (host->num_out < min_tries
 		    || deltaT(&host->send_time, &now) < 5000))
 	    {
 		must_continue++;
 	    }
-	    else
+	    else if (!host->done)
 	    {
 		host->done = 1;
 		validhosts--;
 	    }
 
-	    if (host->invalid || hostcount > (numhosts - validhosts + 5)
-		|| (host->retries && deltaT(&host->send_time, &now) < 5000))
+	    if (host->invalid
+	      || (host->retries && deltaT(&host->send_time, &now) < 3000))
 		continue;
-	    
-	    host->send_time = now;
-	    ttl = choose_ttl(host);
-	    
-	    gettimeofday(&host->send_time, &tz);
-	    host->seq = ++seq;
-	    seq %= 256;
-	    host->retries++;
 	    
 	    if (host->retries < 3  &&  host->num_out < min_tries)
 	    {
-		if (verbose >= 3 && host->retries > 1)
-		    fprintf(stderr, "%-55s - TIMEOUT\n", host->hostname);
-		
-		host->num_out++;
-		send_probe(host->seq, ttl, &outpacket, host);
+		if (!sent_one)
+		{
+		    if (verbose >= 3 && host->retries >= 1)
+			fprintf(stderr, "%-55s - TIMEOUT\n", host->shortname);
+		    
+		    host->send_time = now;
+		    ttl = choose_ttl(host);
+		    
+		    host->seq = ++seq;
+		    seq %= 256;
+		    host->retries++;
+		    
+		    host->num_out++;
+		    send_probe(host->seq, ttl, &outpacket, host);
+		    endcount = hostcount;
+		    sent_one = 1;
+		}
 	    }
 	    else if (host->hops_less_than - host->hops_more_than > 2)
 	    {
+		/* sometimes we get a TIMEOUT instead of an error if
+		 * the ttl is too small; just move to the next one then. */
 		host->hops_more_than = choose_ttl(host);
 		host->retries = 0;
 	    }
@@ -275,17 +305,16 @@ int main(int argc, char **argv)
 		    validhosts--;
 		host->done = 1;
 	    }
-	}
+	} while (hostcount != startcount);
 	
-	delay = 100;
-	while ((host = wait_for_reply(hosts, numhosts, rcvsock, delay))
-	          != NULL)
+	delay = min_lag/2; /* transmit time must be <= min_lag / 2 */
+	if ((host = wait_for_reply(hosts, numhosts, rcvsock, delay)) != NULL)
 	{
 	    gettimeofday(&now, &tz);
 	    delay = 0;
 
 	    if (verbose >= 3)
-		fprintf(stderr, "%-35s  %5u ms  %3d hops - ", host->hostname,
+		fprintf(stderr, "%-35s  %5u ms  %3d hops - ", host->shortname,
 		       (unsigned)deltaT(&host->send_time, &now),
 		       choose_ttl(host));
 	    
@@ -294,6 +323,8 @@ int main(int argc, char **argv)
 	    case -2:
 		if (verbose >= 3)
 		    fprintf(stderr, "HIGHER");
+		else if (verbose >= 1)
+		    fprintf(stderr, ".");
 		if (choose_ttl(host) >= host->hops_less_than)
 		    host->hops_less_than = choose_ttl(host) + 1;
 		host->hops_more_than = choose_ttl(host);
@@ -304,10 +335,19 @@ int main(int argc, char **argv)
 	    case ICMP_UNREACH_PORT:
 		if (verbose >= 3)
 		    fprintf(stderr, "OK");
+		else if (verbose >= 1)
+		    fprintf(stderr, ".");
 		host->hops_less_than = choose_ttl(host);
 		host->retries = 0;
 		host->num_in++;
-		host->total_lag += deltaT(&host->send_time, &now);
+		lag = deltaT(&host->send_time, &now);
+		if (lag > 10 && lag < min_lag)
+		{
+		    min_lag = lag;
+		    if (verbose >= 3)
+			fprintf(stderr, "\nmin_lag is now %d", min_lag);
+		}
+		host->total_lag += lag;
 		break;
 		
 	    case ICMP_UNREACH_NET:
@@ -324,7 +364,7 @@ int main(int argc, char **argv)
 	    case ICMP_UNREACH_TOSNET:
 	    case ICMP_UNREACH_TOSHOST:
 		if (verbose >= 3)
-		    fprintf(stderr, "unreachable!");
+		    fprintf(stderr, "unreachable!\n");
 		if (!host->invalid)
 		    validhosts--;
 		host->invalid = 1;
@@ -337,19 +377,116 @@ int main(int argc, char **argv)
 	    
     }
     
+    if (verbose >= 1)
+	fprintf(stderr, "\n");
+    
     results(hosts, numhosts, num_score);
+    
+    if (hosts)
+    {
+	for (count = 0; count < numhosts; count++)
+	{
+	    free(hosts[count].hostname);
+	    free(hosts[count].shortname);
+	}
+	free(hosts);
+    }
     
     return 0;
 }
 
 
-static void set_up_host(struct hostdata *host, char *hostname, int max_ttl)
+/* 
+ * when the newly-created objects are freed, we try to free(hostname)...
+ * so make sure it's already dynamically allocated when you call this
+ * function!
+ */
+static HostData *add_host(HostData *hosts, int *numhosts,
+			  char *hostname, struct sockaddr_in *addr,
+			  int max_ttl)
 {
+    HostData *host;
+    
+    (*numhosts)++;
+    
+    if (!hosts)
+	hosts = (HostData *)malloc(sizeof(HostData) * *numhosts);
+    else
+	hosts = (HostData *)realloc(hosts, sizeof(HostData) * *numhosts);
+    
+    host = &hosts[*numhosts - 1];
+    
+    memset(host, 0, sizeof(HostData));
     host->hostname = hostname;
-    host->resolver_pid = 0;  /* not resolving yet */
+    host->shortname = un_url(hostname);
+    if (addr)
+	memcpy(&host->addr, addr, sizeof(*addr));
+    else
+	host->invalid = 1;
     host->hops_less_than = max_ttl;
     
-    memset(&host->addr, 0, sizeof(host->addr));
+    return hosts;
+}
+
+
+static char *un_url(char *orig)
+{
+    char *sptr, *eptr, *newbuf;
+    
+    if ((sptr = strstr(orig, "://")) != NULL)
+    {
+	/* URL formatted, like: http://hostname:port/dir/file */
+	sptr += 3; /* skip :// */
+	eptr = strchr(sptr, ':');
+	if (!eptr) eptr = strchr(sptr, '/');
+	if (!eptr) eptr = strchr(sptr, 0);
+	
+	newbuf = (char *)malloc(eptr-sptr+1);
+	strncpy(newbuf, sptr, eptr-sptr);
+	newbuf[eptr-sptr] = 0;
+	return newbuf;
+    }
+    else if ((sptr = strchr(orig, ':')) != NULL)
+    {
+	/* FTP formatted, like: ftp.debian.org:/debian/foo */
+	newbuf = (char *)malloc(sptr-orig+1);
+	strncpy(newbuf, orig, sptr-orig);
+	newbuf[sptr-orig] = 0;
+	return newbuf;
+    }
+    else /* just plain */
+	return strdup(orig);
+}
+
+
+static char *fix_url(char *orig, char *hostname)
+{
+    char *sptr, *eptr, *newbuf;
+    
+    if ((sptr = strstr(orig, "://")) != NULL)
+    {
+	/* URL formatted, like: http://hostname:port/dir/file */
+	sptr += 3; /* skip :// */
+	eptr = strchr(sptr, ':');
+	if (!eptr) eptr = strchr(sptr, '/');
+	if (!eptr) eptr = strchr(sptr, 0);
+	
+	newbuf = (char *)malloc(strlen(orig) + strlen(hostname) + 1);
+	strncpy(newbuf, orig, sptr-orig);
+	strcpy(newbuf+(sptr-orig), hostname);
+	strcat(newbuf, eptr);
+	return newbuf;
+    }
+    else if ((sptr = strchr(orig, ':')) != NULL)
+    {
+	/* FTP formatted, like: ftp.debian.org:/debian/foo */
+	newbuf = (char *)malloc(strlen(orig) + strlen(hostname) + 1);
+	strcpy(newbuf, hostname);
+	strcat(newbuf, sptr);
+	return newbuf;
+    }
+    else /* just plain */
+	return strdup(hostname);
 }
 
 
@@ -357,160 +494,189 @@ static void set_up_host(struct hostdata *host, char *hostname, int max_ttl)
  * Resolve all hostnames to IP addresses.  returns the number of hosts that
  * do not have name resolution errors.
  */
-static int name_resolver(struct hostdata *hosts, int numhosts)
+static HostData *name_resolver(int *numhosts, int numnames, char **names,
+			       int max_ttl)
 {
     struct {
-	int which_host;
-	int broken;
+	char *hostname;
+	int broken, multi;
 	struct sockaddr_in addr;
     } result;
     
-    struct hostdata *host;
-    int validhosts = numhosts, notdone = numhosts, active = 0, toobusy = 0;
-    int count;
+    HostData *hosts = NULL;
+    int closed = 0, active = 0, count = 0, max_active = 24;
     int pipes[2];
     time_t start = time(NULL);
     fd_set rfd, wfd, efd;
     struct timeval tv;
     struct hostent *hp;
+    pid_t pid;
     
     if (pipe(pipes))
     {
 	perror("netselect pipe");
-	return 0;
+	validhosts = 0;
     }
     
-    while (notdone > 0  &&  time(NULL) < start + 20)
+#ifdef __EMX__
+    /* OS/2 uses ASCII mode by default for pipes... */
+    setmode(pipes[0],O_BINARY);
+    setmode(pipes[1],O_BINARY);
+#endif
+    
+    while (time(NULL) < start + 20)
     {
 	if (verbose >= 1)
 	{
 	    fprintf(stderr, "       \rnetselect: %d (%d active) "
 		            "nameserver request(s)...",
-		    notdone, active);
+		    numnames - count + active, active);
 	}
-	
 
-	/* launch new name lookups if there is room */
-	for (host = hosts, count = 0;
-	     active < notdone && !toobusy && active < 24 && count < numhosts;
-	     count++, host++)
+	/* launch new name lookups if we aren't already doing too many */
+	while (active < max_active && count < numnames)
 	{
-	    if (host->invalid || host->resolver_done || host->resolver_pid)
-		continue; /* skip this one */
+	    pid = fork();
 	    
-	    host->resolver_pid = fork();
-	    
-	    if (host->resolver_pid == 0)
+	    if (pid == 0) /* child process */
 	    {
-		result.which_host = count;
+		alarm(20);
+		
+		result.hostname = names[count];
+		result.multi = result.broken = 0;
 		
 		/* child task -- actually do name lookup */
 		result.addr.sin_family = AF_INET;
-		result.addr.sin_addr.s_addr = inet_addr(host->hostname);
+		result.addr.sin_addr.s_addr = inet_addr(names[count]);
 		
 		if (result.addr.sin_addr.s_addr != -1)
 		{
-		    result.broken = 0;
+		    write(pipes[1], &result, sizeof(result));
 		}
 		else
 		{
 		    /* must actually do the name lookup */
-		    hp = gethostbyname(host->hostname);
+		    char *simplename = un_url(result.hostname);
+		    hp = gethostbyname(simplename);
+		    free(simplename);
+		    
 		    if (hp)
 		    {
 			if (hp->h_addrtype != AF_INET 
 			    || hp->h_length != sizeof(struct in_addr))
+			{
 			    result.broken = 1;
+			    write(pipes[1], &result, sizeof(result));
+			}
 			else
 			{
+			    char **ptr = hp->h_addr_list;
+			    
 			    result.broken = 0;
+			    if (ptr[1])
+				result.multi = 1;
 			    result.addr.sin_family = AF_INET;
-			    memcpy(&result.addr.sin_addr,
-				   hp->h_addr, hp->h_length);
+			    
+			    while (*ptr)
+			    {
+				memcpy(&result.addr.sin_addr,
+				       *ptr, hp->h_length);
+				write(pipes[1], &result, sizeof(result));
+				ptr++;
+			    }
 			}
 		    }
 		    else
 		    {
 			result.broken = 1;
+			write(pipes[1], &result, sizeof(result));
 		    }
 		}
 		
-		write(pipes[1], &result, sizeof(result));
 		_exit(result.broken ? 1 : 0);
 	    }
-	    else if (host->resolver_pid < 0)
+	    else if (pid < 0)
 	    {
 		/* trouble forking */
-		toobusy = 1;
+		max_active = active-1;
+		if (max_active < 1)
+		    max_active = 1;
 		break;
 	    }
 	    else
 	    {
 		/* successful launch */
 		active++;
+		count++;
 		start = time(NULL);
 	    }
-	} /* end of launcher clause */
+	} /* end of launcher section */
 	
-	/* reap dead tasks */
-	while (waitpid(-1, NULL, WNOHANG) > 0)
-	    toobusy = 0;
+	/* the parent closes the "write" side of the pipe as soon as it
+	 * doesn't need any more children; then we know all the children
+	 * are dead if selecting on the "read" pipe returns an error.
+	 */
+	if (!closed && !active)
+	{
+	    close(pipes[1]);
+	    closed = 1;
+	}
 	
 	/* read results from our subtasks */
 	tv.tv_sec = active ? 1 : 0;
 	tv.tv_usec = 0;
 	
-	for (;;)
+	FD_ZERO(&rfd);
+	FD_ZERO(&wfd);
+	FD_ZERO(&efd);
+	FD_SET(pipes[0], &rfd);
+	
+	if (select(pipes[0] + 1, &rfd, &wfd, &efd, &tv) > 0)
 	{
-	    FD_ZERO(&rfd);
-	    FD_ZERO(&wfd);
-	    FD_ZERO(&efd);
-	    FD_SET(pipes[0], &rfd);
-	    
-	    if (select(pipes[0] + 1, &rfd, &wfd, &efd, &tv) > 0)
+	    if (read(pipes[0], &result, sizeof(result)) != sizeof(result))
 	    {
-		if (read(pipes[0], &result, sizeof(result)) != sizeof(result))
-		{
+		if (closed && errno == ECHILD)
+		    break; /* done resolving */
+		else
 		    perror("netselect readpipe");
+	    }
+	    else
+	    {
+		/* got some kind of result back! */
+		if (result.broken)
+		{
+		    /* name lookup failed */
+		    char *simplename = un_url(result.hostname);
+		    
+		    hosts = add_host(hosts, numhosts, strdup(result.hostname),
+				     NULL, max_ttl);
+		    if (verbose >= 1)
+			fprintf(stderr, "\r%60s\r", "");
+		    fprintf(stderr, "netselect: unknown host %s\n", simplename);
+		    validhosts--;
+		    
+		    free(simplename);
 		}
 		else
 		{
-		    /* got some kind of result back! */
-		    host = &hosts[result.which_host];
-		    host->resolver_pid = 0;
-		    host->resolver_done = 1;
-		    notdone--;
-		    active--;
+		    /* name lookup successful */
+		    char *newhostname;
 		    
-		    if (result.broken)
-		    {
-			/* name lookup failed */
-			if (verbose >= 1)
-			{
-			    fprintf(stderr, 
-				    "\r                            "
-				    "                            \r");
-			}
-			fprintf(stderr,
-				"netselect: unknown host %s\n",
-				host->hostname);
-			host->invalid = 1;
-			validhosts--;
-		    }
+		    if (result.multi)
+			newhostname = fix_url(result.hostname,
+					      inet_ntoa(result.addr.sin_addr));
 		    else
-		    {
-			/* name lookup successful */
-			memcpy(&host->addr, &result.addr, sizeof(host->addr));
- 			/* printf("%s %s\n", host->hostname,
-				inet_ntoa(host->addr.sin_addr)); */
-		    }
+			newhostname = strdup(result.hostname);
+		    
+		    hosts = add_host(hosts, numhosts, newhostname,
+				     &result.addr, max_ttl);
 		}
 	    }
-	    else
-		break;
-	    
-	    tv.tv_sec = tv.tv_usec = 0; /* keep reading, but no delays! */
 	}
+	
+	/* reap dead tasks */
+	while (waitpid(-1, NULL, WNOHANG) > 0)
+	    active--;
     }
     
     if (verbose >= 1)
@@ -520,37 +686,18 @@ static int name_resolver(struct hostdata *hosts, int numhosts)
 		"                            \r");
     }
     
-    validhosts -= notdone;
-
-    /* finally, clean up any timed-out entries */
-
-    for (host = hosts, count = 0; count < numhosts; count++, host++)
-    {
-	if (host->resolver_pid)
-	{
-	    kill(host->resolver_pid, SIGKILL);
-	    host->resolver_pid = 0;
-	    host->resolver_done = 1;
-	    host->invalid = 1;
-	    
-	    fprintf(stderr, "netselect: nameserver timeout %s\n",
-		    host->hostname);
-	}
-    }
-    
     /* reap any remaining tasks */
     while (waitpid(-1, NULL, WNOHANG) > 0)
-	;
+	active--;
     
     close(pipes[0]);
     close(pipes[1]);
     
-    return validhosts;
+    return hosts;
 }
 
 
-static void send_probe(int seq, int ttl, struct opacket *op,
-		       struct hostdata *host)
+static void send_probe(int seq, int ttl, OPacket *op, HostData *host)
 {
     struct ip *ip = &op->ip;
     struct udphdr *up = &op->udp;
@@ -565,22 +712,42 @@ static void send_probe(int seq, int ttl, struct opacket *op,
     ip->ip_off = 0;
     ip->ip_hl = sizeof(*ip) >> 2;
     ip->ip_p = IPPROTO_UDP;
-    ip->ip_len = htons((u_short) sizeof(struct opacket));
+    ip->ip_len = 0; /* kernel fills this in */
     ip->ip_ttl = ttl;
     ip->ip_v = IPVERSION;
     ip->ip_id = htons(ident + seq);
 
     up->uh_sport = htons(ident);
     up->uh_dport = htons(port + seq);
-    up->uh_ulen = htons((u_short)(sizeof(struct opacket) - sizeof(struct ip)));
+    up->uh_ulen = htons((u_short)(sizeof(OPacket) - sizeof(struct ip)));
     up->uh_sum = 0;
+    
+    if (verbose >= 4)
+    	fprintf(stderr, "%-35s>>\n", host->shortname);
 
-    i = sendto(sndsock, op, sizeof(struct opacket), 0,
+    i = sendto(sndsock, op, sizeof(OPacket), 0,
 	       (struct sockaddr *)&host->addr, sizeof(host->addr));
-    if (i < 0 || i != sizeof(struct opacket))
+    if (i < 0 || i != sizeof(OPacket))
     {
 	if (i < 0)
-	    perror("sendto");
+	{
+	    switch (errno)
+	    {
+	    case ENETDOWN:
+	    case ENETUNREACH:
+	    case EHOSTDOWN:
+	    case EHOSTUNREACH:
+		if (verbose >= 3)
+		    fprintf(stderr, "unreachable or down!\n");
+		if (!host->invalid)
+		    validhosts--;
+		host->invalid = 1;
+		break;
+		
+	    default:
+		perror("sendto");
+	    }
+	}
 	fflush(stdout);
     }
 }
@@ -593,7 +760,7 @@ static time_t deltaT(struct timeval *t1p, struct timeval *t2p)
 }
 
 
-static struct hostdata *wait_for_reply(struct hostdata *hosts, int numhosts,
+static HostData *wait_for_reply(HostData *hosts, int numhosts,
 				       int sock, int msec_timeout)
 {
     fd_set fds;
@@ -603,7 +770,7 @@ static struct hostdata *wait_for_reply(struct hostdata *hosts, int numhosts,
     struct sockaddr_in from;
     int cc = 0;
     time_t msec_used;
-    struct hostdata *host;
+    HostData *host;
     
 #if !defined(__GLIBC__)
     int fromlen = sizeof(from);
@@ -643,7 +810,7 @@ static struct hostdata *wait_for_reply(struct hostdata *hosts, int numhosts,
 }
 
 
-static struct hostdata *packet_ok(struct hostdata *hosts, int numhosts,
+static HostData *packet_ok(HostData *hosts, int numhosts,
 				  u_char * buf, int cc,
 				  struct sockaddr_in *from)
 {
@@ -651,7 +818,7 @@ static struct hostdata *packet_ok(struct hostdata *hosts, int numhosts,
     int hlen;
     struct ip *ip;
     struct icmp *icp;
-    struct hostdata *host;
+    HostData *host;
     int hcount;
 
     ip = (struct ip *) buf;
@@ -687,11 +854,12 @@ static struct hostdata *packet_ok(struct hostdata *hosts, int numhosts,
 	}
     }
 
+    /* fprintf(stderr, "received an unknown packet!\n"); */
     return NULL;
 }
 
 
-static int choose_ttl(struct hostdata *host)
+static int choose_ttl(HostData *host)
 {
     if (!host || host->invalid)
 	return 0;
@@ -710,10 +878,10 @@ static void usage(void)
 }
 
 
-static void results(struct hostdata *hosts, int numhosts, int num_score)
+static void results(HostData *hosts, int numhosts, int num_score)
 {
     int count, lowest_score, score;
-    struct hostdata *host, *lowest_host;
+    HostData *host, *lowest_host;
     
     if (verbose >= 3)
 	fprintf(stderr, "\n");
@@ -756,12 +924,14 @@ static void results(struct hostdata *hosts, int numhosts, int num_score)
 	    
 	printf("%5d %s\n", lowest_score, lowest_host->hostname);
 	lowest_host->invalid = 1; /* skip this one next time */
-	num_score--;
+	
+	if (num_score > 0)
+	    num_score--;
     }
 }
 
 
-static int host_score(struct hostdata *host)
+static int host_score(HostData *host)
 {
     int score;
     
