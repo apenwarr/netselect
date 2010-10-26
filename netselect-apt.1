@@ -1,0 +1,86 @@
+.TH NETSELECT-APT 1 "March 6, 2008" "DEBIAN" \" -*- nroff -*-
+.\" Please adjust this date whenever revising the manpage.
+
+.SH NAME
+netselect-apt \- create sources.list for the fastest Debian mirrors
+
+.SH SYNOPSIS
+.B netselect-apt
+.RI [ OPTIONS ]
+.\" copied verbatim from netselect-apt
+.RI [ \|stable | testing | unstable | experimental | sarge | etch | lenny | sid ]
+
+.SH DESCRIPTION
+
+.B netselect-apt
+automatically creates a sources.list file for using with
+.BR apt
+for the specified distribution by downloading the list of Debian
+mirrors using
+.B wget
+and choosing the fastest servers (both US and non-US) using
+.BR netselect .
+The output file is written to
+.IR OUTFILE .
+
+If there is an 
+.I INFILE
+(by default "mirrors_full") which lists the Debian mirrors,
+.B netselect-apt
+uses that rather than downloading another copy. The file will be downloaded
+from http://www.debian.org/mirror/mirrors_full
+
+.SH OPTIONS
+.TP
+.IR stable | testing | unstable | experimental | sarge | etch | lenny | sid
+Specify which distribution of Debian to use.  By default
+.I stable
+is used.
+
+.TP
+.B \-s, \-\-sources
+While generating
+.I OUTFILE
+include also deb-src lines to use with ``apt-get source'' to obtain
+Debian source packages.
+
+.TP
+.BI "\-i, \-\-infile" " INFILE"
+Use
+.I INFILE
+instead of mirrors_full for reading mirror list. The file must be in
+the same format as mirrors_full.
+
+.TP
+.BI "\-o, \-\-outfile" " OUTFILE"
+Use
+.I OUTFILE
+instead of sources.list.
+
+.TP
+.B \-n, \-\-nonfree
+Include also non-free section while generating
+.IR OUTFILE .
+
+.TP
+.B \-f, \-\-ftp
+Use FTP mirrors instead of HTTP and generate
+.I OUTFILE
+accordingly.
+
+.SH ENVIROMENT
+.TP
+.B WANT_SOURCES
+setting this to 1 is equivalent to --sources
+.TP
+.B WANT_NONFREE
+setting this to 1 is equivalent to --nonfree
+
+.SH SEE ALSO
+.BR netselect (1),
+.BR wget (1),
+.BR apt (8),
+.IR sources.list (5).
+
+.SH AUTHOR
+Avery Pennarun <apenwarr@nit.ca>

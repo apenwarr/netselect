@@ -36,10 +36,8 @@ Note that for ftp.kulnet.kuleuven.ac.be and ftp.de.debian.org in this case,
 nothing got through at all.  That indicates that either the host doesn't
 exist, or it is down.
 
-For a bigger example, I've included the file debian-ftp-mirrors, which is a
-partially up-to-date list of Debian Linux FTP site mirrors.  Try this:
-
-	netselect -vvv $(cat debian-ftp-mirrors)
+For a bigger example, try netselect-apt to build your own sources.list for apt
+with the (possibily) fastest debian mirror.
 
 
 But Why?
@@ -53,7 +51,7 @@ Starting with version 0.2, netselect can make these decisions for you using
 its scoring mechanism.  If you want, however, you can still pass the raw
 results and score the servers as you like.  Try this, for example:
 
-	netselect -vv -s 0 $(cat debian-ftp-mirrors)
+	netselect -vv -s 0 $(cat <your_list_of_sites>)
 	
 The "-s 0" option disables printing of scores at the bottom of the list, and
 "-vv" enables printing of the statistics.
@@ -103,6 +101,9 @@ Not much right now.
 	-vvv	-- very very verbose mode.  Everything -vv prints, plus
 		   print every packet received as it happens.  Good for
 		   debugging or trying to figure out how it works.
+	
+	-vvvv   -- very very very verbose mode. Everything -vvv prints,
+		   plus a trace of all packets sent.
 		   
 	-m #	-- maximum ttl.  Don't accept hosts with more hops than
 		   this.
@@ -133,4 +134,4 @@ Here are some possible improvements:
 This program is highly experimental.  Please let me know what you think.
 
 	- Avery Pennarun
-	  <apenwarr@worldvisions.ca>
+	  <apenwarr@nit.ca>

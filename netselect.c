@@ -1,6 +1,6 @@
 /*
  * Netselect:
- *      Copyright (c) 1998-2001 by Avery Pennarun <apenwarr@worldvisions.ca>
+ *      Copyright (c) 1998-2001 by Avery Pennarun <apenwarr@nit.ca>
  *
  * Traceroute:
  * Copyright (c) 1990, 1993
@@ -151,18 +151,24 @@ int main(int argc, char **argv)
     extern char *optarg;
     extern int optind;
     int hostcount, startcount, endcount = 0, sent_one, lag, min_lag = 100;
-    int ch, seq, ttl, max_ttl = 30, min_tries = 10, num_score = 1;
+    int ch, seq, ttl, max_ttl = 30, num_score = 1;
+    unsigned int min_tries = 10;
     struct timeval now;
     struct timezone tz;
     OPacket outpacket;          /* last output (udp) packet */
     HostData *host, *hosts;
     int numhosts, delay, must_continue, count;
+    int socket_errno = 0;
+
+    if (geteuid () != 0)
+        fprintf (stderr, "%s: root privileges required\n", argv[0]);
 
     if ((rcvsock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) < 0
      || (sndsock = socket(AF_INET, SOCK_RAW, IPPROTO_RAW )) < 0)
     {
-	perror("netselect: socket");
-	return 5;
+	/* Capture errno so that command-line options can be parsed.
+	   We delay reporting an error until this has happened. */
+	socket_errno = errno;
     }
 
     /* drop root privileges as soon as possible! */
@@ -218,7 +224,15 @@ int main(int argc, char **argv)
 	usage();
 	return 1;
     }
-    
+
+    /* Was there an error acquiring a socket? */
+    if (socket_errno)
+    {
+	errno = socket_errno;
+	perror("netselect: socket");
+	return 5;
+    }
+
     memset(&outpacket, 0, sizeof(OPacket));
     outpacket.ip.ip_tos = 0;
     outpacket.ip.ip_v = IPVERSION;
@@ -407,6 +421,19 @@ static HostData *add_host(HostData *hosts, int *numhosts,
 {
     HostData *host;
     
+    if (addr)
+    {
+      int hcount;
+      for (hcount = 0, host = hosts; hcount < *numhosts; hcount++, host++)
+	if (host->addr.sin_addr.s_addr == addr->sin_addr.s_addr)
+	{
+	  if (verbose >= 1)
+	    fprintf(stderr, "\nDuplicate address %s (%s, %s); keeping only under first name.\n",
+		    inet_ntoa(addr->sin_addr), host->hostname, hostname);
+	  return hosts;
+	}
+    }
+    
     (*numhosts)++;
     
     if (!hosts)
@@ -549,7 +576,7 @@ static HostData *name_resolver(int *numhosts, int numnames, char **names,
 		result.addr.sin_family = AF_INET;
 		result.addr.sin_addr.s_addr = inet_addr(names[count]);
 		
-		if (result.addr.sin_addr.s_addr != -1)
+		if (result.addr.sin_addr.s_addr != INADDR_NONE)
 		{
 		    write(pipes[1], &result, sizeof(result));
 		}
@@ -775,7 +802,7 @@ static HostData *wait_for_reply(HostData *hosts, int numhosts,
 #if !defined(__GLIBC__)
     int fromlen = sizeof(from);
 #else				/* __GLIBC__ */
-    size_t fromlen = sizeof(from);
+    socklen_t fromlen = sizeof(from);
 #endif				/* __GLIBC__ */
 
     FD_ZERO(&fds);
@@ -846,7 +873,8 @@ static HostData *packet_ok(HostData *hosts, int numhosts,
 	    
 	    if (hlen + 12 <= cc && hip->ip_p == IPPROTO_UDP &&
 		up->uh_sport == htons(ident) &&
-		up->uh_dport == htons(port + host->seq))
+		up->uh_dport == htons(port + host->seq) &&
+		hip->ip_dst.s_addr == host->addr.sin_addr.s_addr)
 	    {
 		host->code = (type == ICMP_TIMXCEED ? -1 : code + 1);
 		return host;
@@ -873,8 +901,8 @@ static int choose_ttl(HostData *host)
 static void usage(void)
 {
     fprintf(stderr,
-	    "Usage: netselect [-v] [-vv] [-t min_tries] [-m max_ttl]"
-	    " host [host...]\n");
+	    "Usage: netselect [-v|-vv|-vvv] [-m max_ttl] [-s servers] "
+	    "[-t min_tries] host ...\n");
 }
 
 
