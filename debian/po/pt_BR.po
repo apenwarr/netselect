@@ -1,0 +1,57 @@
+#
+#    Translators, if you are not familiar with the PO format, gettext
+#    documentation is worth reading, especially sections dedicated to
+#    this format, e.g. by running:
+#         info -n '(gettext)PO Files'
+#         info -n '(gettext)Header Entry'
+#
+#    Some information specific to po-debconf are available at
+#            /usr/share/doc/po-debconf/README-trans
+#         or http://www.debian.org/intl/l10n/po-debconf/README-trans
+#
+#    Developers do not need to manually edit POT or PO files.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: netselect_0.3.ds1-3\n"
+"Report-Msgid-Bugs-To: filippo@debian.org\n"
+"POT-Creation-Date: 2006-12-06 16:46+0100\n"
+"PO-Revision-Date: 2004-12-01 16:00-0300\n"
+"Last-Translator: Tiago Bortoletto Vaz <tiago@debian-ba.org>\n"
+"Language-Team: Debian-BR Project <debian-l10n-portuguese@lists.debian.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=ISO-8859-1\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#. Type: boolean
+#. Description
+#: ../templates:1001
+msgid "Do you want netselect to be installed setuid root?"
+msgstr "Você quer que o netselect seja instalado com setuid root?"
+
+#. Type: boolean
+#. Description
+#: ../templates:1001
+msgid ""
+"Netselect can be installed with the set-user-id bit set, so that it will run "
+"with the permissions of the 'root' user.  Since netselect needs these "
+"permissions to work properly, ordinary users cannot run it unless it is "
+"installed this way."
+msgstr ""
+"Netselect pode ser instalado com o bit set-user-id setado, dessa forma ele "
+"irá rodar com as permissões do usuário root. Ao menos que o netselect "
+"necessite dessas permissões para funcionar corretamente, usuários normais "
+"não poderão executá-lo a não ser que seja instalado dessa maneira."
+
+#. Type: boolean
+#. Description
+#: ../templates:1001
+#, fuzzy
+msgid ""
+"Enabling this feature may be a security risk, so it is disabled by default.  "
+"If in doubt, it is suggested to leave it disabled."
+msgstr ""
+"Habilitar essa característica pode ser um risco de segurança, então ela é "
+"desabilitada por padrão. Em caso de dúvida, eu sugiro que você deixe-a "
+"desabilitada."

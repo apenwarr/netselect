@@ -1,0 +1,4 @@
+* parse http://www.de.debian.org/dmc/today/ instead of mirrors_full as it might
+  give better informations?
+
+* move to collab-qa (git)

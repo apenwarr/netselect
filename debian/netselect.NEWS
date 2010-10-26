@@ -1,0 +1,6 @@
+netselect (0.3-5) unstable; urgency=low
+
+  * netselect-apt has been split from netselect and is now a separate package   
+    named "netselect-apt".                                                      
+
+ -- Filippo Giunchedi <filippo@esaurito.net>  Fri, 23 Jan 2004 01:01:26 +0100   

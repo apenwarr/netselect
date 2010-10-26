@@ -1,0 +1,20 @@
+#!/bin/sh -e
+
+. /usr/share/debconf/confmodule
+db_get netselect/install-setuid
+
+if [ -x /usr/bin/netselect -a "$RET" = "false" ] ; then
+    if [ -x /usr/sbin/dpkg-statoverride ] && \
+        ! /usr/sbin/dpkg-statoverride --list /usr/bin/netselect >/dev/null; then
+        chown root:root /usr/bin/netselect
+        chmod u=rwx,go=rx /usr/bin/netselect
+    fi
+else
+    if [ -x /usr/sbin/dpkg-statoverride ] && \
+        ! /usr/sbin/dpkg-statoverride --list /usr/bin/netselect >/dev/null; then
+        chown root:root /usr/bin/netselect
+        chmod u=rwxs,go=rx /usr/bin/netselect
+    fi
+fi
+
+#DEBHELPER#

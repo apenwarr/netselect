@@ -1,0 +1,123 @@
+.TH NETSELECT 1 "March 14, 2004" "DEBIAN" \" -*- nroff -*-
+.\" Please adjust this date whenever revising the manpage.
+
+.SH NAME
+netselect \- choose the fastest server automatically
+
+.SH SYNOPSIS
+
+.B netselect
+.RB [ \|\-v\| | \|\-vv\| | \|\-vvv\| | \|\-vvvv\| ]
+.\".RB [ \|\-vv\| ]
+.RB [ \|\-m
+.IR HOPS ]
+.RB [ \|\-s
+.IR SERVERS\| ]
+.RB [ \|\-t
+.IR PACKETS\| ]
+.IR host \ ...
+
+.SH DESCRIPTION
+
+.B netselect
+determines several facts about all of the hosts given on the command
+line, much faster than you would if you manually tried to use
+.B ping
+and
+.BR traceroute .
+
+For each
+.IR host ,
+.B netselect
+figures out the approximate
+.B ping
+time (though not as accurately as
+.B ping
+does), the number of network "hops" to
+reach the target, and the percentage of
+.B ping
+requests that got through successfully. Then
+.B netselect
+calculates the "score" of each operational
+.I host 
+based on these values.  A lower score is better, in the end it prints
+one line showing the server with the best score.
+
+.SH EXAMPLES
+
+.nf
+\fB#\fR netselect \-vv ftp.fceia.unr.edu.ar ftp.kulnet.kuleuven.ac.be \\
+		 ftp.cdrom.com ftp.debian.org ftp.de.debian.org
+.fi
+
+This is the output:
+
+.nf
+ftp.fceia.unr.edu.ar         2792 ms  23 hops  100% ok ( 1/ 1) [ 9213]
+ftp.kulnet.kuleuven.ac.be    9999 ms  30 hops    0% ok
+ftp.cdrom.com                  94 ms   8 hops  100% ok (10/10) [  169]
+ftp.debian.org                 46 ms  15 hops  100% ok (10/10) [  115]
+ftp.de.debian.org            9999 ms  30 hops    0% ok
+  115 ftp.debian.org
+.fi
+
+The value in brackets is the "score" of each operational host based on these
+values.  A lower score is better.  The last line shows the server with the
+best score.  If we had not used '\-vv' on the command line, only this last
+line would have been printed.
+
+Note that for ftp.kulnet.kuleuven.ac.be and ftp.de.debian.org in this case,
+nothing got through at all.  That indicates that either the host doesn't
+exist, or it is down.
+
+.SH OPTIONS
+.TP
+.B \-v
+Verbose mode.  Displays nameserver resolution messages to stderr.  You
+probably want this so that you don't get bored waiting for a hundred
+name resolutions to finish.
+
+.TP
+.B \-vv
+Very verbose mode.  Displays nameserver resolution and statistics (not
+just scores) to STDERR and STDOUT.
+
+.TP
+.B \-vvv
+Very very verbose mode.  Everything \-vv prints, plus it print every
+packet received as it happens.  Good for debugging or trying to figure
+out how it works.
+
+.TP
+.B \-vvvv
+Very very very verbose mode.  Everything \-vvv prints, plus a trace of
+all packets sent.
+
+.TP
+.BI \-m\  HOPS
+Maximum TTL (time to live).  Don't accept hosts that are further than
+.I HOPS
+away.
+
+.TP
+.BI \-s\  SERVERS
+Print this many "top-scoring"
+.I SERVERS
+at the end of the list.  If
+.I SERVERS
+is 0, then this disables printing of high scores.
+
+.TP
+.BI \-t\  PACKETS
+Make sure at least 50% of the hosts get tested with this many
+.IR PACKETS .
+The more packets you use, the more accurate are the results... and the
+longer it takes to run.  The default is 10, which is usually okay.
+
+.SH SEE ALSO
+.BR ping (8),
+.BR traceroute (8),
+.BR netselect-apt (1).
+
+.SH AUTHOR
+Avery Pennarun <apenwarr@nit.ca>

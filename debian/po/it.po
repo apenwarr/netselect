@@ -1,0 +1,46 @@
+# netselect - Italian Debconf messages
+#
+# This file is distributed under the same license as the netselect package.
+# Andrea Bolognani <eof@kiyuko.org>, 2006.
+msgid ""
+msgstr ""
+"Project-Id-Version: netselect 0.3.ds1\n"
+"Report-Msgid-Bugs-To: filippo@debian.org\n"
+"POT-Creation-Date: 2006-12-06 16:46+0100\n"
+"PO-Revision-Date: 2006-03-21 11:25+0100\n"
+"Last-Translator: Andrea Bolognani <eof@kiyuko.org>\n"
+"Language-Team: Italian <it@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=ISO-8859-1\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#. Type: boolean
+#. Description
+#: ../templates:1001
+msgid "Do you want netselect to be installed setuid root?"
+msgstr "Vuoi che netselect venga installato setuid root?"
+
+#. Type: boolean
+#. Description
+#: ../templates:1001
+msgid ""
+"Netselect can be installed with the set-user-id bit set, so that it will run "
+"with the permissions of the 'root' user.  Since netselect needs these "
+"permissions to work properly, ordinary users cannot run it unless it is "
+"installed this way."
+msgstr ""
+"Netselect può essere installato con il bit setuid attivo, in modo che venga "
+"eseguito con i permessi dell'utente 'root'. Dal momento che netselect ha "
+"bisogno di questi permessi per funzionare correttamente, gli utenti ordinari "
+"non possono eseguirlo a meno che non sia installato in questo modo."
+
+#. Type: boolean
+#. Description
+#: ../templates:1001
+msgid ""
+"Enabling this feature may be a security risk, so it is disabled by default.  "
+"If in doubt, it is suggested to leave it disabled."
+msgstr ""
+"Abilitare questa funzionalità potrebbe essere rischioso per la sicurezza, "
+"quindi è disabilitata di default. Nel dubbio, si suggerisce di lasciarla "
+"disabilitata."

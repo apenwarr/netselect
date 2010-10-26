@@ -1,10 +1,11 @@
-#!/bin/bash
+#!/bin/bash 
 #
 # A script to create an apt sources.list file automatically by downloading
 # the list of Debian mirrors and choosing the fastest main and non-us server
 # using netselect.
 #
 # Author: Avery Pennarun <apenwarr@debian.org>
+# Enhancements: Filippo Giunchedi <filippo@esaurito.net>
 #
 # License: public domain.  Please feel free to improve this script.  It
 # doesn't really belong in the netselect package, particularly since the
@@ -13,18 +14,31 @@
 # please do.  Then tell me, so I can remove it from the netselect package.
 #
 # TO DO:
-#   - parse command line options for output file, input files, etc.
 #   - have some way to pass options (especially -t) to netselect.
 #   - test the generated files automatically.  Some mirrors in the list
 #       are broken.  We should at least verify that the Packages and Sources
 #       files exist and aren't ancient.
 #   - maybe generate redundant entries, in case one server is missing files?
-#
-#
 
-URL="http://www.debian.org/mirror/mirrors_full"
-DISTRO="$1"
+# our defaults
+# RATIONALE for WANT_SOURCES and WANT_NONFREE environmental variables:
+# both variables can be system wide and can be useful to not always specify them
+# on the commandline
 
+want_sources=${WANT_SOURCES:-0}
+want_nonfree=${WANT_NONFREE:-0}
+want_nonus=0
+want_security=1
+infile="mirrors_full"
+outfile="sources.list"
+distro="stable"
+protocol="HTTP"
+url="http://www.debian.org/mirror/mirrors_full"
+arch=$(/usr/bin/dpkg --print-architecture)
+
+options="-o a:si:o:nfhu -l arch:,sources,infile:,outfile:,nonfree,ftp,nonus,help"
+
+# misc functions
 log()
 {
 	echo "$@" >&2
@@ -33,73 +47,172 @@ log()
 run_netselect()
 {
 	SEARCH="$1"
-
-	netselect -v -s 1 $(cat mirrors_full \
-	    | perl -n -e '
-	    	if (m{^'"$SEARCH"':.*<a href="(http://.*?)">}) {
-			print("$1\n");
-		}') \
-	    | awk '{print $2}'
+    PROTO="$2"
+    netselect -v -s 1 $(cat "$infile" \
+        | perl -n -e '
+            $/="<br><br>";
+            while(<>){
+              next if $_ !~ /Site:/;
+              if( ( /Includes architectures:.+'"$arch"'.+/i ||
+                    $_ !~ /Includes architectures:/
+                  ) &&
+                    m@'"$SEARCH"':.*<a href="('"$PROTO"'://.*?)">@i ){
+                    print("$1\n"); 
+              }
+            }') \
+        | awk '{print $2}'
 }
 
-if [ -z "$1" ]; then
-	log "You didn't provide a distribution name (usually 'stable', "
-	log "'testing', or 'unstable') on the command line.  We'll use "
-	log "'stable' by default."
-	log
-	DISTRO=stable
+netselect_error()
+{
+	log "netselect was unable to find a mirror, this probably means that"
+	log "you are behind a firewall and it is blocking traceroute."
+}
+
+usage()
+{
+	log "Usage: netselect-apt [OPTIONS] [ stable | testing | unstable | experimental ]"
+	log "Options:"
+    log "   -a, --arch             Use mirrors containing arch (default: $arch)"
+	log "   -s, --sources          Include deb-src lines in generated file (default: no)"
+	log "   -i, --infile INFILE    Use INFILE as the input file (default: mirrors_full)"
+	log "   -o, --outfile OUTFILE  Use OUTFILE as the output file"
+	log "                            (default: sources.list)"
+	log "   -n, --nonfree          Use also non-free packages in OUTFILE (default: no)"
+	log "   -f, --ftp              Use FTP as the protocol for OUTFILE (default: HTTP)"
+	log "   -u, --nonus            Force generation of obsolete non-US lines"
+}
+
+
+# can we use netselect?
+# ok, we should also check ownership of netselect but assuming it's root
+if [ ! -u /usr/bin/netselect -a "$UID" -gt 0 ]; then
+	log "netselect has not the set-user-id bit set and you are not root"
+	log "please run netselect-apt as root or set-user-id bit on /usr/bin/netselect"
+	exit 2
 fi
 
-if [ ! -f mirrors_full -a ! -e /usr/bin/wget ]; then
+# commandline parsing
+temp=$(getopt $options -n 'netselect-apt' -- "$@")
+if [ $? != 0 ]; then echo "Terminating..." >&2; exit 2; fi
+eval set -- "$temp"
+while true; do
+	case "$1" in
+        -a|--arch) arch=$2; shift 2 ;;
+		-s|--sources) want_sources=1; shift ;;
+		-i|--infile) infile="$2"; shift 2 ;;
+		-o|--outfile) outfile="$2"; shift 2 ;;
+		-n|--nonfree) want_nonfree=1; shift ;;
+		-f|--ftp) protocol="FTP"; shift ;;
+		-u|--nonus) want_nonus=1; shift ;;
+        -h|--help) usage; exit 0;;
+		--) shift; break;;
+		*) echo "Internal Error!"; echo "args: $@"; exit 1;;
+	esac
+done
+
+# distro is a non-option for backward compatibility
+case "$1" in
+	stable|testing|unstable|experimental|sarge|etch|lenny|sid) distro="$1" ;;
+	'') ;;
+	*) log "Invalid distribution: $1"; exit 1 ;;
+esac
+
+if [ "$distro" != "stable" ]; then
+    want_security=0
+fi
+
+# netselect starting
+log "Using distribution $distro."
+
+if [ ! -f "$infile" -a ! -x /usr/bin/wget ]; then
 	log "Sorry, this script requires the 'wget' package in order to run."
 	log "You can also download the mirrors list yourself and leave it"
-	log "in the current directory:"
-	log "        $URL"
-	exit 1
+	log "in the current directory, consult the manpage for further details:"
+	log "        $url"
+	exit 2
 fi
 
-if [ ! -f mirrors_full ]; then
+if [ ! -f "$infile" ]; then
 	log "Retrieving the list of mirrors from www.debian.org..."
 	log
 
-	if ! wget "$URL"; then
+	if ! /usr/bin/wget -O "$infile" "$url"; then
 		log "$0: wget failed.  Please try to correct the problem"
 		log "by reading the wget messages printed above."
 		exit 2
 	fi
 else
-	log "There is a already a mirrors_full file in the current"
-	log "directory.  I'll use that, rather than downloading it again."
+	log "$infile has been found."
+	log "I'll use that, rather than downloading it again."
 	log
 fi
 
 log "Choosing a main Debian mirror using netselect."
-MAIN=$(run_netselect "Packages over HTTP")
-log "The fastest server seems to be:"
-log "        $MAIN"
-log
+main=$(run_netselect "Packages over $protocol" $protocol)
+if [ -z "$main" ]; then
+	netselect_error
+	exit 2
+else
+	log "The fastest server seems to be:"
+	log "        $main"
+	log
+fi
 
-log "Choosing a non-US Debian mirror using netselect."
-NON_US=$(run_netselect "Non-US packages over HTTP")
-log "The fastest non-US server seems to be:"
-log "        $NON_US"
-log
+if [ $want_nonus -eq 1 ]; then
+    
+    log "Choosing a non-US Debian mirror using netselect."
+    non_us=$(run_netselect "Non-US packages over $protocol" $protocol)
+    if [ -z "$non_us" ]; then
+	    netselect_error
+	    exit 2
+    else
+    	log "The fastest non-US server seems to be:"
+    	log "        $non_us"
+    	log
+    fi
 
-log "Writing the sources.list in the current directory."
+fi
 
-rm -f sources.list
+log "Writing $outfile."
+
+if [ -f "$outfile" ]; then
+	log "$outfile exists, moving to $outfile.$(date +%s)"
+	mv $outfile $outfile.orig
+fi
+
+sections="main contrib"
+if [ "$want_nonfree" -eq 1 ]; then sections="$sections non-free"; fi
 
 (
-	echo "# the main Debian packages.  Uncomment the deb-src line if you"
-	echo "# want 'apt-get source' to work with most packages."
-	echo "deb $MAIN $DISTRO main contrib non-free"
-	echo "# deb-src $MAIN $DISTRO main contrib non-free"
-	
-	echo
-	echo "# the non-US Debian packages.  Uncomment the deb-src line if you"
-	echo "# want 'apt-get source' to work with non-US packages."
-	echo "deb $NON_US $DISTRO/non-US main contrib non-free"
-	echo "# deb-src $NON_US $DISTRO/non-US main contrib non-free"
-) >sources.list
+	echo "# Debian packages for $distro" 
+	echo "deb $main $distro $sections"
+	echo "# Uncomment the deb-src line if you want 'apt-get source'"
+	echo "# to work with most packages."
+	if [ "$want_sources" -eq 0 ]; then
+		echo -n "# "
+	fi
+	echo "deb-src $main $distro $sections" 
+
+    if [ $want_nonus -eq 1 ]; then
+        echo
+        echo "# the non-US Debian packages."
+        echo "deb $non_us $distro/non-US $sections"
+        echo "# Uncomment the deb-src line if you want 'apt-get source'"
+        echo "# to work with most non-US packages"
+        if [ "$want_sources" -eq 0 ]; then
+            echo -n "# "
+        fi
+        echo "deb-src $non_us $distro/non-US $sections"
+    fi
+
+	echo 
+	echo "# Security updates for stable"
+	if [ "$want_security" -eq 0 ]; then
+		echo -n "# "
+	fi
+    echo "deb http://security.debian.org/ stable/updates $sections"
+
+) > $outfile
 
 echo "Done."

@@ -1,8 +1,9 @@
-
-This is the Debian GNU/Linux prepackaged version of netselect.  It was
-written and then Debian-packaged by Avery Pennarun
-<apenwarr@worldvisions.ca>.  It was derived from Van Jacobson's traceroute,
-and shares its license, which follows:
+This is the Debian GNU/Linux packaged version of netselect.  It was written and
+then Debian-packaged by Avery Pennarun <apenwarr@nit.ca>.
+It was downloaded from:
+http://people.nit.ca/~apenwarr/netselect/index.html
+It was derived from Van Jacobson's traceroute, and shares its license, which
+follows:
 
 [Note: the University of California has released an updated license that
 removes the so-called "obnoxious advertising clause" and Avery has
@@ -10,7 +11,7 @@ correspondingly updated netselect as well.]
 
 /*
  * Netselect:
- *      Copyright (c) 1998 by Avery Pennarun <apenwarr@worldvisions.ca>
+ *      Copyright (c) 1998 by Avery Pennarun <apenwarr@nit.ca>
  *
  * Traceroute:
  * Copyright (c) 1990, 1993

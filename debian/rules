@@ -1,66 +1,76 @@
 #!/usr/bin/make -f
-# 							-*- makefile -*-
-# debian.rules file for the Debian/GNU Linux apmd package
-# Copyright 1996-98 by Dirk Eddelbuettel <edd@debian.org>
-# And fiddled with by Avery Pennarun for use with netselect
+# Sample debian/rules that uses debhelper.
+# This file is public domain software, originally written by Joey Hess. 
 
-package	= netselect
-debtmp	:= $(shell pwd)/debian/tmp
-
+# Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
 build: build-stamp
 build-stamp:
 	dh_testdir
-	$(MAKE)
+
+	# Add here commands to compile the package.
+	$(MAKE) netselect
+
 	touch build-stamp
 
 clean:
 	dh_testdir
 	dh_testroot
 	rm -f build-stamp
-	-$(MAKE) clean
+
+	# Add here commands to clean up after the build process.
+	$(MAKE) clean
+
 	dh_clean
 
-binary-indep: build
-
-binary-arch: build
-#	dh_testversion
+install: build
 	dh_testdir
 	dh_testroot
-	dh_installdebconf
 	dh_clean -k
-	dh_installdirs
-	$(MAKE) PREFIX=`pwd`/debian/tmp/usr \
-		MANDEST=`pwd`/debian/tmp/usr/share/man install
-	dh_installdocs	README README.OS2 README.traceroute HISTORY
-#	dh_installmenu
-#	dh_installinit	--noscripts
-#	dh_installcron
-#	dh_installmanpages
-	dh_undocumented
-	#dh_installexamples		debian-ftp-mirrors
-	dh_installchangelogs		ChangeLog
-	dh_strip
-	dh_link
-	dh_compress
-	echo x1; ls -l debian/tmp/usr/bin
-	#dh_suidregister
-	echo x2; ls -l debian/tmp/usr/bin
-	dh_fixperms
-	chmod u+s debian/tmp/usr/bin/netselect
-	dh_installdeb
-	dh_shlibdeps
-	dh_gencontrol
-#	dh_makeshlibs
-#	dh_md5sums
-	echo x3; ls -l debian/tmp/usr/bin
-	dh_builddeb
-	echo x4; ls -l debian/tmp/usr/bin
+	dh_installdirs -A
 
-source diff:                                                                  
-	@echo >&2 'source and diff are obsolete - use dpkg-source -b'; false
+	# Add here commands to install the package into debian/<packagename>
+	$(MAKE) PREFIX=$(CURDIR)/debian/netselect/usr \
+		MANDEST=$(CURDIR)/debian/netselect/usr/share/man/man1 install
+	
+	mv $(CURDIR)/debian/netselect/usr/bin/netselect-apt \
+	   $(CURDIR)/debian/netselect-apt/usr/bin/
+	
+	rm -r $(CURDIR)/debian/netselect/usr/share/man/man1/netselect-apt.1
+
+# Build architecture-independent files here.
+binary-indep: build install
+	dh_testdir -i
+	dh_testroot -i
+	dh_installchangelogs -i
+	dh_installdocs -i
+	dh_installman -i
+	dh_link -i
+	dh_compress -i
+	dh_fixperms -i
+	dh_installdeb -i
+	dh_gencontrol -i
+	dh_md5sums -i
+	dh_builddeb -i
+
+# Build architecture-dependent files here.
+binary-arch: build install
+	dh_testdir -a
+	dh_testroot -a
+	dh_installchangelogs -a ChangeLog 
+	dh_installdocs -a
+	dh_installdebconf -a
+	dh_installman -a
+	dh_link -a
+	dh_strip -a
+	dh_compress -a
+	dh_fixperms -a
+	dh_installdeb -a
+	dh_shlibdeps -a
+	dh_gencontrol -a
+	dh_md5sums -a
+	dh_builddeb -a
 
 binary: binary-indep binary-arch
-.PHONY: build clean binary-indep binary-arch binary
-
+.PHONY: build clean binary-indep binary-arch binary install

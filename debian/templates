@@ -1,0 +1,11 @@
+Template: netselect/install-setuid
+Type: boolean
+Default: false
+_Description: Do you want netselect to be installed setuid root?
+ Netselect can be installed with the set-user-id bit set, so that it will
+ run with the permissions of the 'root' user.  Since netselect needs these
+ permissions to work properly, ordinary users cannot run it unless it is
+ installed this way.
+ .
+ Enabling this feature may be a security risk, so it is disabled by
+ default.  If in doubt, it is suggested to leave it disabled.

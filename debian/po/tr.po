@@ -1,0 +1,49 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+# Mert Dirik <mertdirik@gmail.com>, 2008.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: netselect\n"
+"Report-Msgid-Bugs-To: filippo@debian.org\n"
+"POT-Creation-Date: 2006-12-06 16:46+0100\n"
+"PO-Revision-Date: 2008-07-15 00:46+0200\n"
+"Last-Translator: Mert Dirik <mertdirik@gmail.com>\n"
+"Language-Team: Debian L10n Turkish <debian-l10n-turkish@lists.debian.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+"X-Poedit-Language: Turkish\n"
+
+#. Type: boolean
+#. Description
+#: ../templates:1001
+msgid "Do you want netselect to be installed setuid root?"
+msgstr "netselect root setuid biti ayarlanmış olarak kurulsun mu?"
+
+#. Type: boolean
+#. Description
+#: ../templates:1001
+msgid ""
+"Netselect can be installed with the set-user-id bit set, so that it will run "
+"with the permissions of the 'root' user.  Since netselect needs these "
+"permissions to work properly, ordinary users cannot run it unless it is "
+"installed this way."
+msgstr ""
+"Netselect, kullanıcı kimliğine ayarlama biti ayarlanmış biçimde (setuid) "
+"kurularak 'root' kullanıcısının izinleriyle çalışabilir. Netselect düzgün "
+"çalışmak için  bu izinlere ihtiyaç duyar ve bu şekilde kurulmadığı sürece "
+"sıradan kullanıcılar tarafından çalıştırılamaz."
+
+#. Type: boolean
+#. Description
+#: ../templates:1001
+msgid ""
+"Enabling this feature may be a security risk, so it is disabled by default.  "
+"If in doubt, it is suggested to leave it disabled."
+msgstr ""
+"Bu özelliği etkinleştirmek güvenlik sorunlarına yol açabilir ve risklidir; "
+"bu nedenle öntanımlı olarak kapalıdır.  Karar veremediyseniz, özelliği "
+"kapalı olarak bırakmanız tavsiye edilir."
