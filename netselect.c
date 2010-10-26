@@ -87,6 +87,19 @@ typedef struct
     struct timeval tv;		/* time packet left */
 } OPacket;
 
+/*
+ * format of a (icmp) probe packet.
+ */
+typedef struct
+{
+    struct ip ip;
+    struct icmp icmp;
+    u_char seq;			/* sequence number of this packet */
+    u_char ttl;			/* ttl packet left with */
+    struct timeval tv;		/* time packet left */
+} IPacket;
+
+
 
 /* 
  * currently-known information about a host
@@ -122,6 +135,8 @@ static HostData *name_resolver(int *numhosts, int numnames, char **names,
 
 static void send_probe(int seq, int ttl, OPacket *op,
 		       HostData *host);
+static void send_icmp_probe(int seq, int ttl, IPacket *op,
+		       HostData *host);
 static time_t deltaT(struct timeval *t1p, struct timeval *t2p);
 static HostData *wait_for_reply(HostData *hosts, int numhosts,
 				       int sock, int msec_timeout);
@@ -152,10 +167,13 @@ int main(int argc, char **argv)
     extern int optind;
     int hostcount, startcount, endcount = 0, sent_one, lag, min_lag = 100;
     int ch, seq, ttl, max_ttl = 30, num_score = 1;
+    int use_icmp = 0;
     unsigned int min_tries = 10;
     struct timeval now;
     struct timezone tz;
-    OPacket outpacket;          /* last output (udp) packet */
+    OPacket udppacket;          /* last output (udp) packet */
+    IPacket icmppacket;          /* last output (udp) packet */
+    
     HostData *host, *hosts;
     int numhosts, delay, must_continue, count;
     int socket_errno = 0;
@@ -179,7 +197,7 @@ int main(int argc, char **argv)
 #ifdef __EMX__
     _response(&argc,&argv);
 #endif
-    while ((ch = getopt(argc, argv, "s:t:m:v?")) != EOF)
+    while ((ch = getopt(argc, argv, "s:t:m:Iv?")) != EOF)
     {
 	switch (ch)
 	{
@@ -203,6 +221,10 @@ int main(int argc, char **argv)
 		fprintf(stderr, "netselect: max ttl must be >1.\n");
 		return 1;
 	    }
+	    break;
+
+	case 'I':
+            use_icmp = 1;
 	    break;
 
 	case 'v':
@@ -233,10 +255,20 @@ int main(int argc, char **argv)
 	return 5;
     }
 
-    memset(&outpacket, 0, sizeof(OPacket));
-    outpacket.ip.ip_tos = 0;
-    outpacket.ip.ip_v = IPVERSION;
-    outpacket.ip.ip_id = 0;
+    if ( use_icmp )  
+    {
+        memset(&icmppacket, 0, sizeof(IPacket));
+        icmppacket.ip.ip_tos = 0;
+        icmppacket.ip.ip_v = IPVERSION;
+        icmppacket.ip.ip_id = 0;
+    } 
+    else 
+    {
+        memset(&udppacket, 0, sizeof(OPacket));
+        udppacket.ip.ip_tos = 0;
+        udppacket.ip.ip_v = IPVERSION;
+        udppacket.ip.ip_id = 0;
+    }
 
     ident = (getpid() & 0xffff) | 0x8000;
     
@@ -301,7 +333,10 @@ int main(int argc, char **argv)
 		    host->retries++;
 		    
 		    host->num_out++;
-		    send_probe(host->seq, ttl, &outpacket, host);
+                    if ( use_icmp ) 
+                        send_icmp_probe(host->seq, ttl, &icmppacket, host);
+                    else
+                        send_probe(host->seq, ttl, &udppacket, host);
 		    endcount = hostcount;
 		    sent_one = 1;
 		}
@@ -363,7 +398,7 @@ int main(int argc, char **argv)
 		}
 		host->total_lag += lag;
 		break;
-		
+
 	    case ICMP_UNREACH_NET:
 	    case ICMP_UNREACH_HOST:
 	    case ICMP_UNREACH_PROTOCOL:
@@ -750,11 +785,82 @@ static void send_probe(int seq, int ttl, OPacket *op, HostData *host)
     up->uh_sum = 0;
     
     if (verbose >= 4)
-    	fprintf(stderr, "%-35s>>\n", host->shortname);
+    	fprintf(stderr, "%-35s(UDP)>>\n", host->shortname);
 
     i = sendto(sndsock, op, sizeof(OPacket), 0,
 	       (struct sockaddr *)&host->addr, sizeof(host->addr));
     if (i < 0 || i != sizeof(OPacket))
+    {
+	if (i < 0)
+	{
+	    switch (errno)
+	    {
+	    case ENETDOWN:
+	    case ENETUNREACH:
+	    case EHOSTDOWN:
+	    case EHOSTUNREACH:
+		if (verbose >= 3)
+		    fprintf(stderr, "unreachable or down!\n");
+		if (!host->invalid)
+		    validhosts--;
+		host->invalid = 1;
+		break;
+		
+	    default:
+		perror("sendto");
+	    }
+	}
+	fflush(stdout);
+    }
+}
+
+uint16_t
+checksum (uint16_t *header, size_t len)
+{
+    uint32_t sum = 0;
+    int i;
+
+    for (i = 0; i < len / sizeof (uint16_t); i++)
+        sum += ntohs (header[i]);
+
+    return htons (~((sum >> 16) + (sum & 0xffff)));
+}
+
+static void send_icmp_probe(int seq, int ttl, IPacket *op, HostData *host)
+{
+    struct ip *ip = &op->ip;
+    struct icmp *icmp = &op->icmp;
+    struct timezone tz;
+    int i;
+
+    op->ip.ip_dst = host->addr.sin_addr;
+    op->seq = seq;
+    op->ttl = ttl;
+    gettimeofday(&op->tv, &tz);
+
+    ip->ip_off = 0;
+    ip->ip_hl = sizeof(*ip) >> 2;
+    ip->ip_p = IPPROTO_ICMP;
+    ip->ip_len = 0; /* kernel fills this in */
+    ip->ip_ttl = ttl;
+    ip->ip_v = IPVERSION;
+    ip->ip_id = htons(ident + seq);
+
+    icmp->icmp_type= ICMP_ECHO;
+    icmp->icmp_code = 0;
+    icmp->icmp_cksum = 0;
+    icmp->icmp_id = htons (ident);
+    icmp->icmp_seq = htons (seq); 
+    icmp->icmp_cksum = checksum((void *)icmp, sizeof(IPacket) - sizeof(struct ip)); 
+
+    if (verbose >= 4)
+    	fprintf(stderr, "%-35s(ICMP)>>\n", host->shortname);
+    if (verbose >= 5)
+        fprintf(stderr, "ICMP sequence: %i, identifier: %i\n", icmp->icmp_seq, icmp->icmp_id);
+
+    i = sendto(sndsock, op, sizeof(IPacket), 0,
+	       (struct sockaddr *)&host->addr, sizeof(host->addr));
+    if (i < 0 || i != sizeof(IPacket))
     {
 	if (i < 0)
 	{
@@ -857,8 +963,12 @@ static HostData *packet_ok(HostData *hosts, int numhosts,
 
     type = icp->icmp_type;
     code = icp->icmp_code;
+
+    if (verbose >= 5)
+        fprintf(stderr, "Received ICMP type: %i, code: %i, from %s\n", type, code, inet_ntoa(ip->ip_src) );
+
     if ((type == ICMP_TIMXCEED && code == ICMP_TIMXCEED_INTRANS)
-	|| type == ICMP_UNREACH)
+	|| type == ICMP_UNREACH || type == ICMP_ECHOREPLY )
     {
 	struct ip *hip;
 	struct udphdr *up;
@@ -866,11 +976,31 @@ static HostData *packet_ok(HostData *hosts, int numhosts,
 	hip = &icp->icmp_ip;
 	hlen = hip->ip_hl << 2;
 	up = (struct udphdr *) ((u_char *) hip + hlen);
+
 	
 	for (hcount = 0, host = hosts; hcount < numhosts; hcount++, host++)
 	{
 	    if (host->invalid) continue;
+
+            /* Valid ICMP echo reply packet */
+            if ( type == ICMP_ECHOREPLY &&
+                 ip->ip_src.s_addr == host->addr.sin_addr.s_addr &&
+                 icp->icmp_id == htons(ident) && 
+                 icp->icmp_seq == htons(host->seq) )
+            {
+		host->code = ICMP_UNREACH_PORT + 1; /* Behave like if a UDP packet was received even though we used ICMP */
+		return host;
+            }
+            /* Time exceeded reply to an ICMP echo request */
+            if ( type == ICMP_TIMXCEED &&
+                 hip->ip_dst.s_addr == host->addr.sin_addr.s_addr &&
+                 hip->ip_id == htons(ident+host->seq) )
+            {
+		host->code = -1; 
+		return host;
+            }
 	    
+            /* Valid reply to an UDP probe packet */
 	    if (hlen + 12 <= cc && hip->ip_p == IPPROTO_UDP &&
 		up->uh_sport == htons(ident) &&
 		up->uh_dport == htons(port + host->seq) &&
@@ -882,7 +1012,8 @@ static HostData *packet_ok(HostData *hosts, int numhosts,
 	}
     }
 
-    /* fprintf(stderr, "received an unknown packet!\n"); */
+    if (verbose >= 3)
+        fprintf(stderr, "received an unknown packet!\n"); 
     return NULL;
 }
 
@@ -901,7 +1032,7 @@ static int choose_ttl(HostData *host)
 static void usage(void)
 {
     fprintf(stderr,
-	    "Usage: netselect [-v|-vv|-vvv] [-m max_ttl] [-s servers] "
+	    "Usage: netselect [-v|-vv|-vvv] [-I] [-m max_ttl] [-s servers] "
 	    "[-t min_tries] host ...\n");
 }
 
@@ -971,3 +1102,4 @@ static int host_score(HostData *host)
     
     return score;
 }
+

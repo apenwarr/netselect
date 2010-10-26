@@ -114,6 +114,16 @@ Make sure at least 50% of the hosts get tested with this many
 The more packets you use, the more accurate are the results... and the
 longer it takes to run.  The default is 10, which is usually okay.
 
+.TP
+.BI \-I
+Use ICMP instead of UDP probes. In some occassions (firewalled hosts)
+UDP probes like those used in
+.BR traceroute 
+will get filtered out and hosts might be perceived as dead. Using this
+option will make 
+.BR netselect
+use ICMP probes instead. 
+
 .SH SEE ALSO
 .BR ping (8),
 .BR traceroute (8),
