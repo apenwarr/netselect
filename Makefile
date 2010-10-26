@@ -39,4 +39,4 @@ uninstall:
 	$(RM) ${MANDEST}/netselect.8
 
 clean:
-	$(RM) netselect netselect${BINSUFFIX} *.o *~ build-stamp core
+	$(RM) netselect netselect${BINSUFFIX} *.o *~ .*~ build-stamp core
