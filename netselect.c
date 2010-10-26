@@ -1,6 +1,6 @@
 /*
  * Netselect:
- *      Copyright (c) 1998-2001 by Avery Pennarun <apenwarr@nit.ca>
+ *      Copyright (c) 1998-2010 by Avery Pennarun <apenwarr@gmail.com>
  *
  * Traceroute:
  * Copyright (c) 1990, 1993

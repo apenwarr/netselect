@@ -4,7 +4,7 @@
 # the list of Debian mirrors and choosing the fastest main and non-us server
 # using netselect.
 #
-# Author: Avery Pennarun <apenwarr@debian.org>
+# Author: Avery Pennarun <apenwarr@gmail.com>
 # Enhancements: Filippo Giunchedi <filippo@esaurito.net>
 #
 # License: public domain.  Please feel free to improve this script.  It
