@@ -56,7 +56,7 @@ run_netselect()
               if( ( /Includes architectures:.+'"$arch"'.+/i ||
                     $_ !~ /Includes architectures:/
                   ) &&
-                    m@'"$SEARCH"':.*<a href="('"$PROTO"'://.*?)">@i ){
+                    m@'"$SEARCH"':.*<a rel="nofollow" href="('"$PROTO"'://.*?)">@i ){
                     print("$1\n"); 
               }
             }') \
