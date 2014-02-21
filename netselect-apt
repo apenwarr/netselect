@@ -33,7 +33,7 @@ infile="mirrors_full"
 outfile="sources.list"
 distro="stable"
 protocol="HTTP"
-url="http://www.debian.org/mirror/mirrors_full"
+url="http://www.debian.org/mirror/list"
 arch=$(/usr/bin/dpkg --print-architecture)
 
 options="-o a:si:o:nfhu -l arch:,sources,infile:,outfile:,nonfree,ftp,nonus,help"
