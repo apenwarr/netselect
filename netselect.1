@@ -15,6 +15,7 @@ netselect \- choose the fastest server automatically
 .IR SERVERS\| ]
 .RB [ \|\-t
 .IR PACKETS\| ]
+.RB [ \|\-4 | \|\-6 ]
 .IR host \ ...
 
 .SH DESCRIPTION
@@ -123,6 +124,14 @@ will get filtered out and hosts might be perceived as dead. Using this
 option will make 
 .BR netselect
 use ICMP probes instead. 
+
+.TP
+.BI \-4
+Restrict address lookups to IPv4 only.
+
+.TP
+.BI \-6
+Restrict address lookups to IPv6 only.
 
 .SH SEE ALSO
 .BR ping (8),

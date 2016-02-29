@@ -58,6 +58,8 @@
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <netinet/ip_icmp.h>
+#include <netinet/ip6.h>
+#include <netinet/icmp6.h>
 #include <netinet/udp.h>
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -97,9 +99,28 @@ typedef struct
     u_char seq;			/* sequence number of this packet */
     u_char ttl;			/* ttl packet left with */
     struct timeval tv;		/* time packet left */
-} IPacket;
+}__attribute__((packed)) IPacket;
 
+/*
+ * format of a (headerless udp) probe packet.
+ */
+typedef struct
+{
+    struct udphdr udp;
+    u_char seq;			/* sequence number of this packet */
+    u_char ttl;			/* ttl packet left with */
+    struct timeval tv;		/* time packet left */
+} OPacket6;
 
+/*
+ * format of a (icmpv6) probe packet.
+ */
+typedef struct
+{
+    struct icmp6_hdr icmp6;	/* icmp6 contains seq (id) and ttl (seq)
+                                 * fields already */
+    struct timeval tv;		/* time packet left */
+}__attribute__((packed)) I6Packet;
 
 /* 
  * currently-known information about a host
@@ -108,7 +129,7 @@ typedef struct
 {
     char *hostname;		/* hostname as provided on command line */
     char *shortname;		/* hostname with any URL-type stuff removed */
-    struct sockaddr_in addr;	/* remote address */
+    struct sockaddr_storage addr;	/* remote address */
 
     int invalid;		/* !=0 if we discard this host */
     int done;			/* !=0 if host testing is done */
@@ -126,23 +147,30 @@ typedef struct
 
 /* prototypes for functions in this file */
 static HostData *add_host(HostData *host, int *numhosts,
-			  char *hostname, struct sockaddr_in *addr,
+			  char *hostname, struct sockaddr *addr,
 			  int max_ttl);
 static char *un_url(char *orig);
-static char *fix_url(char *orig, char *hostname);
+static char *fix_url(char *orig, struct sockaddr *addr);
 static HostData *name_resolver(int *numhosts, int numnames, char **names,
 			       int max_ttl);
 
 static void send_probe(int seq, int ttl, OPacket *op,
 		       HostData *host);
+static void send_probe6(int seq, int ttl, OPacket6 *op,
+		       HostData *host);
 static void send_icmp_probe(int seq, int ttl, IPacket *op,
+		       HostData *host);
+static void send_icmp6_probe(int seq, int ttl, I6Packet *op,
 		       HostData *host);
 static time_t deltaT(struct timeval *t1p, struct timeval *t2p);
 static HostData *wait_for_reply(HostData *hosts, int numhosts,
-				       int sock, int msec_timeout);
+				       int msec_timeout);
 static HostData *packet_ok(HostData *hosts, int numhosts,
 				  u_char *buf, int cc,
 				  struct sockaddr_in *from);
+static HostData *packet6_ok(HostData *hosts, int numhosts,
+				  u_char *buf, int cc,
+				  struct sockaddr_in6 *from);
 static int choose_ttl(HostData *host);
 static void usage();
 static void results(HostData *hosts, int numhosts, int num_score);
@@ -153,13 +181,17 @@ static int host_score(HostData *host);
 
 /* global variables */
 static int rcvsock;		/* receive (icmp) socket file descriptor */
+static int rcvsock6;		/* IPv6 receive (icmp) socket file descriptor */
 static int sndsock;		/* send (udp) socket file descriptor */
+static int sndsock6;		/* IPv6 send socket file descriptor */
 
 static int verbose = 0;
 static u_short ident;
 static u_short port = 32768 + 666; /* start udp dest port for probe packets */
 
 static int validhosts;
+
+static int addr_fam = AF_UNSPEC;
 
 int main(int argc, char **argv)
 {
@@ -168,21 +200,25 @@ int main(int argc, char **argv)
     int hostcount, startcount, endcount = 0, sent_one, lag, min_lag = 100;
     int ch, seq, ttl, max_ttl = 30, num_score = 1;
     int use_icmp = 0;
+    int sock_v6_only = 1;
     unsigned int min_tries = 10;
     struct timeval now;
     struct timezone tz;
     OPacket udppacket;          /* last output (udp) packet */
-    IPacket icmppacket;          /* last output (udp) packet */
+    IPacket icmppacket;         /* last output (icmp) packet */
+    OPacket6 udppacket6;        /* last output (headerless udp) packet */
+    I6Packet icmp6packet;       /* last output (icmp6) packet */
     
     HostData *host, *hosts;
-    int numhosts, delay, must_continue, count;
+    int numhosts, delay, must_continue, count, port_unreachable, other_unreachable;
     int socket_errno = 0;
 
     if (geteuid () != 0)
         fprintf (stderr, "%s: root privileges required\n", argv[0]);
 
-    if ((rcvsock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) < 0
-     || (sndsock = socket(AF_INET, SOCK_RAW, IPPROTO_RAW )) < 0)
+    if ((rcvsock  = socket(AF_INET,  SOCK_RAW, IPPROTO_ICMP)) < 0
+     || (sndsock  = socket(AF_INET,  SOCK_RAW, IPPROTO_RAW )) < 0
+     || (rcvsock6 = socket(AF_INET6, SOCK_RAW, IPPROTO_ICMPV6)) < 0)
     {
 	/* Capture errno so that command-line options can be parsed.
 	   We delay reporting an error until this has happened. */
@@ -197,7 +233,7 @@ int main(int argc, char **argv)
 #ifdef __EMX__
     _response(&argc,&argv);
 #endif
-    while ((ch = getopt(argc, argv, "s:t:m:Iv?")) != EOF)
+    while ((ch = getopt(argc, argv, "s:t:m:Iv?46")) != EOF)
     {
 	switch (ch)
 	{
@@ -225,6 +261,14 @@ int main(int argc, char **argv)
 
 	case 'I':
             use_icmp = 1;
+	    break;
+
+	case '4':
+            addr_fam = AF_INET;
+	    break;
+
+	case '6':
+            addr_fam = AF_INET6;
 	    break;
 
 	case 'v':
@@ -255,12 +299,27 @@ int main(int argc, char **argv)
 	return 5;
     }
 
+    if (addr_fam == AF_INET)
+    {
+	close(rcvsock6);
+	rcvsock6 = -1;
+    }
+    else if (addr_fam == AF_INET6)
+    {
+	close(rcvsock);
+	rcvsock = -1;
+    }
+
+    ident = (getpid() & 0xffff) | 0x8000;
+
     if ( use_icmp )  
     {
         memset(&icmppacket, 0, sizeof(IPacket));
         icmppacket.ip.ip_tos = 0;
         icmppacket.ip.ip_v = IPVERSION;
         icmppacket.ip.ip_id = 0;
+
+        sndsock6 = rcvsock6;
     } 
     else 
     {
@@ -268,10 +327,41 @@ int main(int argc, char **argv)
         udppacket.ip.ip_tos = 0;
         udppacket.ip.ip_v = IPVERSION;
         udppacket.ip.ip_id = 0;
+
+	if (addr_fam != AF_INET)
+	{
+	    struct sockaddr_in6 source;
+
+	    if ((sndsock6 = socket(AF_INET6, SOCK_DGRAM, 0)) < 0)
+	    {
+		perror("netselect: socket");
+		if (errno == EPERM) {
+		    fprintf(stderr, "You should be root to run netselect.\n");
+		    return 6;
+		}
+		return 5;
+	    }
+
+	    if (setsockopt(sndsock6, IPPROTO_IPV6, IPV6_V6ONLY,
+			   &sock_v6_only, sizeof(int)) < 0)
+	    {
+		perror("setsockopt with IPV6_V6ONLY");
+		return 1;
+	    }
+
+	    memset(&source, 0, sizeof(struct sockaddr_in6));
+	    source.sin6_family = AF_INET6;
+	    source.sin6_port = htons(ident);
+	    memcpy(&source.sin6_addr, &in6addr_any, sizeof(struct in6_addr));
+
+	    if (bind(sndsock6, (struct sockaddr *)&source, sizeof(source)) < 0)
+	    {
+		perror("bind");
+		return 1;
+	    }
+	}
     }
 
-    ident = (getpid() & 0xffff) | 0x8000;
-    
     validhosts = numhosts = 0;
     
     hosts = name_resolver(&numhosts, argc, argv, max_ttl);
@@ -333,12 +423,26 @@ int main(int argc, char **argv)
 		    host->retries++;
 		    
 		    host->num_out++;
-                    if ( use_icmp ) 
-                        send_icmp_probe(host->seq, ttl, &icmppacket, host);
-                    else
-                        send_probe(host->seq, ttl, &udppacket, host);
-		    endcount = hostcount;
-		    sent_one = 1;
+		    if (host->addr.ss_family == AF_INET
+		     || host->addr.ss_family == AF_INET6)
+		    {
+			if (host->addr.ss_family == AF_INET)
+			{
+			    if ( use_icmp )
+				send_icmp_probe(host->seq, ttl, &icmppacket, host);
+			    else
+				send_probe(host->seq, ttl, &udppacket, host);
+			}
+			else
+			{
+			    if ( use_icmp )
+				send_icmp6_probe(host->seq, ttl, &icmp6packet, host);
+			    else
+				send_probe6(host->seq, ttl, &udppacket6, host);
+			}
+			endcount = hostcount;
+			sent_one = 1;
+		    }
 		}
 	    }
 	    else if (host->hops_less_than - host->hops_more_than > 2)
@@ -357,7 +461,7 @@ int main(int argc, char **argv)
 	} while (hostcount != startcount);
 	
 	delay = min_lag/2; /* transmit time must be <= min_lag / 2 */
-	if ((host = wait_for_reply(hosts, numhosts, rcvsock, delay)) != NULL)
+	if ((host = wait_for_reply(hosts, numhosts, delay)) != NULL)
 	{
 	    gettimeofday(&now, &tz);
 	    delay = 0;
@@ -366,10 +470,11 @@ int main(int argc, char **argv)
 		fprintf(stderr, "%-35s  %5u ms  %3d hops - ", host->shortname,
 		       (unsigned)deltaT(&host->send_time, &now),
 		       choose_ttl(host));
-	    
-	    switch (host->code - 1)
+
+	    port_unreachable = 0;
+	    other_unreachable = 0;
+	    if (host->code == -1)
 	    {
-	    case -2:
 		if (verbose >= 3)
 		    fprintf(stderr, "HIGHER");
 		else if (verbose >= 1)
@@ -379,9 +484,51 @@ int main(int argc, char **argv)
 		host->hops_more_than = choose_ttl(host);
 		host->retries = 0;
 		host->num_out--;
-		break;
-		
-	    case ICMP_UNREACH_PORT:
+	    }
+	    else if (host->addr.ss_family == AF_INET)
+	    {
+		switch (host->code - 1)
+		{
+		case ICMP_UNREACH_PORT:
+		    port_unreachable = 1;
+		    break;
+
+		case ICMP_UNREACH_NET:
+		case ICMP_UNREACH_HOST:
+		case ICMP_UNREACH_PROTOCOL:
+		case ICMP_UNREACH_NEEDFRAG:
+		case ICMP_UNREACH_SRCFAIL:
+		case ICMP_UNREACH_FILTER_PROHIB:
+		case ICMP_UNREACH_NET_PROHIB:	/* misuse */
+		case ICMP_UNREACH_HOST_PROHIB:
+		case ICMP_UNREACH_NET_UNKNOWN:
+		case ICMP_UNREACH_HOST_UNKNOWN:
+		case ICMP_UNREACH_ISOLATED:
+		case ICMP_UNREACH_TOSNET:
+		case ICMP_UNREACH_TOSHOST:
+		    other_unreachable = 1;
+		    break;
+		}
+	    }
+	    else if (host->addr.ss_family == AF_INET6)
+	    {
+		switch (host->code - 1)
+		{
+		case ICMP6_DST_UNREACH_NOPORT:
+		    port_unreachable = 1;
+		    break;
+
+		case ICMP6_DST_UNREACH_NOROUTE:
+		case ICMP6_DST_UNREACH_ADMIN:
+		case ICMP6_DST_UNREACH_BEYONDSCOPE:
+		case ICMP6_DST_UNREACH_ADDR:
+		    other_unreachable = 1;
+		    break;
+		}
+	    }
+
+	    if (port_unreachable)
+	    {
 		if (verbose >= 3)
 		    fprintf(stderr, "OK");
 		else if (verbose >= 1)
@@ -397,27 +544,14 @@ int main(int argc, char **argv)
 			fprintf(stderr, "\nmin_lag is now %d", min_lag);
 		}
 		host->total_lag += lag;
-		break;
-
-	    case ICMP_UNREACH_NET:
-	    case ICMP_UNREACH_HOST:
-	    case ICMP_UNREACH_PROTOCOL:
-	    case ICMP_UNREACH_NEEDFRAG:
-	    case ICMP_UNREACH_SRCFAIL:
-	    case ICMP_UNREACH_FILTER_PROHIB:
-	    case ICMP_UNREACH_NET_PROHIB:	/* misuse */
-	    case ICMP_UNREACH_HOST_PROHIB:
-	    case ICMP_UNREACH_NET_UNKNOWN:
-	    case ICMP_UNREACH_HOST_UNKNOWN:
-	    case ICMP_UNREACH_ISOLATED:
-	    case ICMP_UNREACH_TOSNET:
-	    case ICMP_UNREACH_TOSHOST:
+	    }
+	    else if (other_unreachable)
+	    {
 		if (verbose >= 3)
 		    fprintf(stderr, "unreachable!\n");
 		if (!host->invalid)
 		    validhosts--;
 		host->invalid = 1;
-		break;
 	    }
 
 	    if (verbose >= 3)
@@ -444,6 +578,10 @@ int main(int argc, char **argv)
     return 0;
 }
 
+static inline int in6_addr_cmp(struct in6_addr *a, struct in6_addr *b)
+{
+    return memcmp(&a->s6_addr, &b->s6_addr, 16);
+}
 
 /* 
  * when the newly-created objects are freed, we try to free(hostname)...
@@ -451,21 +589,57 @@ int main(int argc, char **argv)
  * function!
  */
 static HostData *add_host(HostData *hosts, int *numhosts,
-			  char *hostname, struct sockaddr_in *addr,
+			  char *hostname, struct sockaddr *addr,
 			  int max_ttl)
 {
     HostData *host;
     
     if (addr)
     {
-      int hcount;
-      for (hcount = 0, host = hosts; hcount < *numhosts; hcount++, host++)
-	if (host->addr.sin_addr.s_addr == addr->sin_addr.s_addr)
+	int hcount;
+	sa_family_t family = ((struct sockaddr_storage *)addr)->ss_family;
+	struct in_addr *addr4, *haddr4;
+	struct in6_addr *addr6, *haddr6;
+
+	if ((family != AF_INET  && family   != AF_INET6)
+	 || (family == AF_INET  && addr_fam == AF_INET6)
+	 || (family == AF_INET6 && addr_fam == AF_INET ))
+        {
+	    if (verbose >= 1)
+		fprintf(stderr, "\nUnsupported address family %hu for host %s address\n",
+			family, hostname);
+	    return hosts;
+        }
+
+	if (family == AF_INET)
+	    addr4 = &((struct sockaddr_in  *)addr)->sin_addr;
+	else
+	    addr6 = &((struct sockaddr_in6 *)addr)->sin6_addr;
+
+	for (hcount = 0, host = hosts; hcount < *numhosts; hcount++, host++)
 	{
-	  if (verbose >= 1)
-	    fprintf(stderr, "\nDuplicate address %s (%s, %s); keeping only under first name.\n",
-		    inet_ntoa(addr->sin_addr), host->hostname, hostname);
-	  return hosts;
+	    if (host->invalid || host->addr.ss_family != family)
+		continue;
+
+	    if (family == AF_INET)
+		haddr4 = &((struct sockaddr_in  *)&host->addr)->sin_addr;
+	    else
+		haddr6 = &((struct sockaddr_in6 *)&host->addr)->sin6_addr;
+
+	    if ((family == AF_INET  && haddr4->s_addr == addr4->s_addr)
+	     || (family == AF_INET6 && in6_addr_cmp(haddr6, addr6) == 0))
+	    {
+		if (verbose >= 1)
+		{
+		    char txt[INET6_ADDRSTRLEN];
+		    fprintf(stderr, "\nDuplicate address %s (%s, %s); keeping only under first name.\n",
+			    inet_ntop(family,
+				      family == AF_INET ? (void *)addr4 : (void *)addr6,
+				      txt, sizeof(txt)),
+			    host->hostname, hostname);
+		}
+		return hosts;
+	    }
 	}
     }
     
@@ -482,7 +656,7 @@ static HostData *add_host(HostData *hosts, int *numhosts,
     host->hostname = hostname;
     host->shortname = un_url(hostname);
     if (addr)
-	memcpy(&host->addr, addr, sizeof(*addr));
+	memcpy(&host->addr, addr, sizeof(struct sockaddr_storage));
     else
 	host->invalid = 1;
     host->hops_less_than = max_ttl;
@@ -493,62 +667,133 @@ static HostData *add_host(HostData *hosts, int *numhosts,
 
 static char *un_url(char *orig)
 {
-    char *sptr, *eptr, *newbuf;
+    char *sptr, *eptr = NULL, *newbuf;
     
     if ((sptr = strstr(orig, "://")) != NULL)
     {
 	/* URL formatted, like: http://hostname:port/dir/file */
 	sptr += 3; /* skip :// */
-	eptr = strchr(sptr, ':');
+	if (*sptr == '[') /* v6 literal address */
+	{
+	    eptr = strchr(sptr, ']');
+	    if (eptr)
+		++sptr;
+	}
+	if (!eptr) eptr = strchr(sptr, ':');
 	if (!eptr) eptr = strchr(sptr, '/');
 	if (!eptr) eptr = strchr(sptr, 0);
 	
+    }
+    else
+    {
+	if (*orig == '[')
+	{
+	    /* quoted v6 literal address in non-URL format */
+	    eptr = strchr(orig, ']');
+	    if (eptr)
+		sptr = orig + 1;
+	}
+
+	if (!sptr && (eptr = strchr(orig, ':')) != NULL)
+	{
+	    /* Could be an IPv6 address */
+	    struct sockaddr_storage ss;
+	    if (inet_pton(AF_INET6, orig, &ss) != 1)
+	    {
+		/* FTP formatted, like: ftp.debian.org:/debian/foo */
+		sptr = orig;
+	    }
+	}
+    }
+
+    if (sptr)
+    {
 	newbuf = (char *)malloc(eptr-sptr+1);
 	strncpy(newbuf, sptr, eptr-sptr);
 	newbuf[eptr-sptr] = 0;
-	return newbuf;
-    }
-    else if ((sptr = strchr(orig, ':')) != NULL)
-    {
-	/* FTP formatted, like: ftp.debian.org:/debian/foo */
-	newbuf = (char *)malloc(sptr-orig+1);
-	strncpy(newbuf, orig, sptr-orig);
-	newbuf[sptr-orig] = 0;
 	return newbuf;
     }
     else /* just plain */
 	return strdup(orig);
 }
 
-
-static char *fix_url(char *orig, char *hostname)
+static char *fix_url(char *orig, struct sockaddr *addr)
 {
-    char *sptr, *eptr, *newbuf;
-    
-    if ((sptr = strstr(orig, "://")) != NULL)
+    char *pree = NULL, *posts = NULL;
+    char addrstr[INET6_ADDRSTRLEN + 2];
+    void *src;
+
+    if ((pree = strstr(orig, "://")) != NULL)
     {
 	/* URL formatted, like: http://hostname:port/dir/file */
-	sptr += 3; /* skip :// */
-	eptr = strchr(sptr, ':');
-	if (!eptr) eptr = strchr(sptr, '/');
-	if (!eptr) eptr = strchr(sptr, 0);
-	
-	newbuf = (char *)malloc(strlen(orig) + strlen(hostname) + 1);
-	strncpy(newbuf, orig, sptr-orig);
-	strcpy(newbuf+(sptr-orig), hostname);
-	strcat(newbuf, eptr);
-	return newbuf;
+	pree += 3; /* skip :// */
+	if (*pree == '[') /* v6 literal address */
+	{
+	    posts = strchr(pree, ']');
+	    if (posts)
+		++posts;
+	}
+	if (!posts) posts = strchr(pree, ':');
+	if (!posts) posts = strchr(pree, '/');
+	if (!posts) posts = strchr(pree, 0);
     }
-    else if ((sptr = strchr(orig, ':')) != NULL)
+    else
     {
-	/* FTP formatted, like: ftp.debian.org:/debian/foo */
-	newbuf = (char *)malloc(strlen(orig) + strlen(hostname) + 1);
-	strcpy(newbuf, hostname);
-	strcat(newbuf, sptr);
+	pree = orig;
+	if (*pree == '[')
+	{
+	    /* quoted v6 literal address in non-URL format */
+	    posts = strchr(pree, ']');
+	    if (posts)
+		++posts;
+	}
+	
+	if (!posts)
+	{
+	    struct sockaddr_storage ss;
+	    if (inet_pton(AF_INET6, orig, &ss) != 1)
+	    {
+		/* FTP formatted, like: ftp.debian.org:/debian/foo */
+		posts = strchr(orig, ':');
+	    }
+	}
+    }
+
+    if (addr->sa_family == AF_INET)
+	src = &((struct sockaddr_in  *)addr)->sin_addr;
+    else
+	src = &((struct sockaddr_in6 *)addr)->sin6_addr;
+
+    inet_ntop(addr->sa_family, src, addrstr, sizeof(addrstr));
+
+    if (posts)
+    {
+	char *newbuf;
+	size_t addrlen;
+	size_t prelen = pree - orig;
+	size_t postlen = strlen(posts);
+
+	/* We want to quote a v6 address in this case */
+	if (addr->sa_family == AF_INET6)
+	{
+	    char quoted_addr[sizeof(addrstr)];
+	    sprintf(quoted_addr, "[%s]", addrstr);
+	    strcpy(addrstr, quoted_addr);
+	}
+
+	addrlen = strlen(addrstr);
+
+	newbuf = (char *)malloc(prelen + addrlen + postlen + 1);
+
+	if (prelen > 0)
+	    strncpy(newbuf, orig, prelen);
+	strncpy(newbuf + prelen, addrstr, addrlen);
+	strncpy(newbuf + prelen + addrlen, posts, postlen);
+
 	return newbuf;
     }
     else /* just plain */
-	return strdup(hostname);
+	return strdup(addrstr);
 }
 
 
@@ -562,7 +807,7 @@ static HostData *name_resolver(int *numhosts, int numnames, char **names,
     struct {
 	char *hostname;
 	int broken, multi;
-	struct sockaddr_in addr;
+	struct sockaddr_storage addr;
     } result;
     
     HostData *hosts = NULL;
@@ -571,8 +816,9 @@ static HostData *name_resolver(int *numhosts, int numnames, char **names,
     time_t start = time(NULL);
     fd_set rfd, wfd, efd;
     struct timeval tv;
-    struct hostent *hp;
+    struct addrinfo *hp, hints;
     pid_t pid;
+    int err;
     
     if (pipe(pipes))
     {
@@ -585,6 +831,10 @@ static HostData *name_resolver(int *numhosts, int numnames, char **names,
     setmode(pipes[0],O_BINARY);
     setmode(pipes[1],O_BINARY);
 #endif
+
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = addr_fam;
+    hints.ai_flags  = AI_ADDRCONFIG;
     
     while (time(NULL) < start + 20)
     {
@@ -608,45 +858,52 @@ static HostData *name_resolver(int *numhosts, int numnames, char **names,
 		result.multi = result.broken = 0;
 		
 		/* child task -- actually do name lookup */
-		result.addr.sin_family = AF_INET;
-		result.addr.sin_addr.s_addr = inet_addr(names[count]);
-		
-		if (result.addr.sin_addr.s_addr != INADDR_NONE)
+
+		/* try simple IPv4 dotted-quad conversion */
+		if (addr_fam != AF_INET6)
 		{
-		    write(pipes[1], &result, sizeof(result));
+		    struct sockaddr_in *addr4 = (struct sockaddr_in *) &result.addr;
+		    addr4->sin_family = AF_INET;
+		    addr4->sin_addr.s_addr = inet_addr(names[count]);
+
+		    if (addr4->sin_addr.s_addr != INADDR_NONE)
+		    {
+			write(pipes[1], &result, sizeof(result));
+			/* Use this as a flag to not do a lookup */
+			result.multi = 1;
+		    }
 		}
-		else
+
+		if (result.multi == 0);
 		{
 		    /* must actually do the name lookup */
 		    char *simplename = un_url(result.hostname);
-		    hp = gethostbyname(simplename);
+		    err = getaddrinfo(simplename, NULL, &hints, &hp);
 		    free(simplename);
 		    
-		    if (hp)
+		    if (!err)
 		    {
-			if (hp->h_addrtype != AF_INET 
-			    || hp->h_length != sizeof(struct in_addr))
+			struct addrinfo *ptr;
+			int already_seen_one = 0;
+
+			result.broken = 0;
+			for (ptr = hp; ptr; ptr = ptr->ai_next)
 			{
-			    result.broken = 1;
-			    write(pipes[1], &result, sizeof(result));
-			}
-			else
-			{
-			    char **ptr = hp->h_addr_list;
-			    
-			    result.broken = 0;
-			    if (ptr[1])
+			    if ((ptr->ai_family != AF_INET  && ptr->ai_family != AF_INET6)
+			     || (ptr->ai_family == AF_INET  && addr_fam == AF_INET6)
+			     || (ptr->ai_family == AF_INET6 && addr_fam == AF_INET))
+				continue;
+
+			    if (already_seen_one)
 				result.multi = 1;
-			    result.addr.sin_family = AF_INET;
-			    
-			    while (*ptr)
-			    {
-				memcpy(&result.addr.sin_addr,
-				       *ptr, hp->h_length);
-				write(pipes[1], &result, sizeof(result));
-				ptr++;
-			    }
+
+			    memcpy(&result.addr, ptr->ai_addr, ptr->ai_addrlen);
+			    write(pipes[1], &result, sizeof(result));
+			    if (!already_seen_one)
+				already_seen_one = 1;
 			}
+
+			freeaddrinfo(hp);
 		    }
 		    else
 		    {
@@ -726,12 +983,12 @@ static HostData *name_resolver(int *numhosts, int numnames, char **names,
 		    
 		    if (result.multi)
 			newhostname = fix_url(result.hostname,
-					      inet_ntoa(result.addr.sin_addr));
+					      (struct sockaddr *)&result.addr);
 		    else
 			newhostname = strdup(result.hostname);
 		    
 		    hosts = add_host(hosts, numhosts, newhostname,
-				     &result.addr, max_ttl);
+				     (struct sockaddr *)&result.addr, max_ttl);
 		}
 	    }
 	}
@@ -758,15 +1015,43 @@ static HostData *name_resolver(int *numhosts, int numnames, char **names,
     return hosts;
 }
 
+static void do_sendto(int sockfd, const void *buf, size_t len, HostData *host)
+{
+    int i;
+    i = sendto(sockfd, buf, len, 0, (struct sockaddr *)&host->addr,
+	       sizeof(struct sockaddr_storage));
+    if (i < 0 || i != len)
+    {
+	if (i < 0)
+	{
+	    switch (errno)
+	    {
+	    case ENETDOWN:
+	    case ENETUNREACH:
+	    case EHOSTDOWN:
+	    case EHOSTUNREACH:
+		if (verbose >= 3)
+		    fprintf(stderr, "unreachable or down!\n");
+		if (!host->invalid)
+		    validhosts--;
+		host->invalid = 1;
+		break;
+
+	    default:
+		perror("sendto");
+	    }
+	}
+	fflush(stdout);
+    }
+}
 
 static void send_probe(int seq, int ttl, OPacket *op, HostData *host)
 {
     struct ip *ip = &op->ip;
     struct udphdr *up = &op->udp;
     struct timezone tz;
-    int i;
 
-    op->ip.ip_dst = host->addr.sin_addr;
+    op->ip.ip_dst = ((struct sockaddr_in *)&host->addr)->sin_addr;
     op->seq = seq;
     op->ttl = ttl;
     gettimeofday(&op->tv, &tz);
@@ -787,31 +1072,30 @@ static void send_probe(int seq, int ttl, OPacket *op, HostData *host)
     if (verbose >= 4)
     	fprintf(stderr, "%-35s(UDP)>>\n", host->shortname);
 
-    i = sendto(sndsock, op, sizeof(OPacket), 0,
-	       (struct sockaddr *)&host->addr, sizeof(host->addr));
-    if (i < 0 || i != sizeof(OPacket))
+    do_sendto(sndsock, op, sizeof(OPacket), host);
+}
+
+static void send_probe6(int seq, int ttl, OPacket6 *op, HostData *host)
+{
+    struct sockaddr_in6 *addr = (struct sockaddr_in6 *)&host->addr;
+    struct timezone tz;
+
+    op->seq = seq;
+    op->ttl = ttl;
+    gettimeofday(&op->tv, &tz);
+
+    addr->sin6_port = htons(port + seq);
+
+    if (verbose >= 4)
+        fprintf(stderr, "%-35s(UDP6)>>\n", host->shortname);
+
+    if (setsockopt(sndsock6, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &ttl, sizeof(ttl)) < 0)
     {
-	if (i < 0)
-	{
-	    switch (errno)
-	    {
-	    case ENETDOWN:
-	    case ENETUNREACH:
-	    case EHOSTDOWN:
-	    case EHOSTUNREACH:
-		if (verbose >= 3)
-		    fprintf(stderr, "unreachable or down!\n");
-		if (!host->invalid)
-		    validhosts--;
-		host->invalid = 1;
-		break;
-		
-	    default:
-		perror("sendto");
-	    }
-	}
-	fflush(stdout);
+	perror("setsockopt with IPV6_UNICAST_HOPS");
+	return;
     }
+
+    do_sendto(sndsock6, op, sizeof(OPacket6), host);
 }
 
 uint16_t
@@ -831,9 +1115,8 @@ static void send_icmp_probe(int seq, int ttl, IPacket *op, HostData *host)
     struct ip *ip = &op->ip;
     struct icmp *icmp = &op->icmp;
     struct timezone tz;
-    int i;
 
-    op->ip.ip_dst = host->addr.sin_addr;
+    op->ip.ip_dst = ((struct sockaddr_in *)&host->addr)->sin_addr;
     op->seq = seq;
     op->ttl = ttl;
     gettimeofday(&op->tv, &tz);
@@ -854,35 +1137,38 @@ static void send_icmp_probe(int seq, int ttl, IPacket *op, HostData *host)
     icmp->icmp_cksum = checksum((void *)icmp, sizeof(IPacket) - sizeof(struct ip)); 
 
     if (verbose >= 4)
-    	fprintf(stderr, "%-35s(ICMP)>>\n", host->shortname);
+        fprintf(stderr, "%-35s(ICMP)>>\n", host->shortname);
     if (verbose >= 5)
         fprintf(stderr, "ICMP sequence: %i, identifier: %i\n", icmp->icmp_seq, icmp->icmp_id);
 
-    i = sendto(sndsock, op, sizeof(IPacket), 0,
-	       (struct sockaddr *)&host->addr, sizeof(host->addr));
-    if (i < 0 || i != sizeof(IPacket))
+    do_sendto(sndsock, op, sizeof(IPacket), host);
+}
+
+static void send_icmp6_probe(int seq, int ttl, I6Packet *op, HostData *host)
+{
+    struct icmp6_hdr *icmp = &op->icmp6;
+    struct timezone tz;
+
+    gettimeofday(&op->tv, &tz);
+
+    icmp->icmp6_type = ICMP6_ECHO_REQUEST;
+    icmp->icmp6_code = 0;
+    icmp->icmp6_cksum = 0;
+    icmp->icmp6_id = htons (ident);
+    icmp->icmp6_seq = htons (seq);
+
+    if (verbose >= 4)
+        fprintf(stderr, "%-35s(ICMP6)>>\n", host->shortname);
+    if (verbose >= 5)
+        fprintf(stderr, "ICMP6 sequence: %i, identifier: %i\n", icmp->icmp6_seq, icmp->icmp6_id);
+
+    if (setsockopt(sndsock6, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &ttl, sizeof(ttl)) < 0)
     {
-	if (i < 0)
-	{
-	    switch (errno)
-	    {
-	    case ENETDOWN:
-	    case ENETUNREACH:
-	    case EHOSTDOWN:
-	    case EHOSTUNREACH:
-		if (verbose >= 3)
-		    fprintf(stderr, "unreachable or down!\n");
-		if (!host->invalid)
-		    validhosts--;
-		host->invalid = 1;
-		break;
-		
-	    default:
-		perror("sendto");
-	    }
-	}
-	fflush(stdout);
+	perror("setsockopt with IPV6_UNICAST_HOPS");
+	return;
     }
+
+    do_sendto(sndsock6, op, sizeof(I6Packet), host);
 }
 
 
@@ -892,18 +1178,12 @@ static time_t deltaT(struct timeval *t1p, struct timeval *t2p)
 	 + (t2p->tv_usec - t1p->tv_usec) / 1000;
 }
 
-
-static HostData *wait_for_reply(HostData *hosts, int numhosts,
-				       int sock, int msec_timeout)
+static HostData * receive(HostData *hosts, int numhosts, int sock)
 {
-    fd_set fds;
-    struct timeval wait, start_time;
-    struct timezone tz;
     u_char inpacket[INPACKET_SIZE];
-    struct sockaddr_in from;
+    struct sockaddr_storage from;
     int cc = 0;
-    time_t msec_used;
-    HostData *host;
+    HostData *host = NULL;
     
 #if !defined(__GLIBC__)
     int fromlen = sizeof(from);
@@ -911,8 +1191,46 @@ static HostData *wait_for_reply(HostData *hosts, int numhosts,
     socklen_t fromlen = sizeof(from);
 #endif				/* __GLIBC__ */
 
+    cc = recvfrom(sock, inpacket, INPACKET_SIZE, 0,
+		  (struct sockaddr *) &from, &fromlen);
+    if (cc > 0 &&
+	(addr_fam == AF_UNSPEC || from.ss_family == addr_fam))
+    {
+	if (from.ss_family == AF_INET)
+	    host = packet_ok(hosts, numhosts, inpacket, cc,
+			     (struct sockaddr_in *)&from);
+	else
+	    host = packet6_ok(hosts, numhosts, inpacket, cc,
+			      (struct sockaddr_in6 *)&from);
+    }
+
+    return host;
+}
+
+static HostData *wait_for_reply(HostData *hosts, int numhosts,
+				       int msec_timeout)
+{
+    fd_set fds;
+    struct timeval wait, start_time;
+    struct timezone tz;
+    time_t msec_used;
+    HostData *host;
+    int nfds = -1;
+    int sock;
+
     FD_ZERO(&fds);
-    FD_SET(sock, &fds);
+    if (addr_fam != AF_INET6)
+    {
+	FD_SET(rcvsock,  &fds);
+	nfds = rcvsock;
+    }
+    if (addr_fam != AF_INET)
+    {
+	FD_SET(rcvsock6, &fds);
+	if (nfds < rcvsock6)
+	    nfds = rcvsock6;
+    }
+    ++nfds;
     
     gettimeofday(&start_time, &tz);
 
@@ -926,16 +1244,19 @@ static HostData *wait_for_reply(HostData *hosts, int numhosts,
 	wait.tv_usec = (msec_timeout - msec_used) * 1000;
 	wait.tv_sec = 0;
 	
-	if (select(sock + 1, &fds, NULL, NULL, &wait) > 0)
+	if (select(nfds, &fds, NULL, NULL, &wait) > 0)
 	{
-	    cc = recvfrom(rcvsock, inpacket, INPACKET_SIZE, 0,
-			  (struct sockaddr *) &from, &fromlen);
-	    if (cc > 0)
-	    {
-		if ((host = packet_ok(hosts, numhosts, inpacket, cc, &from))
-		            != NULL)
-		    return host;
-	    }
+	    if (addr_fam == AF_INET)
+		sock = rcvsock;
+	    else if (addr_fam == AF_INET6)
+		sock = rcvsock6;
+	    else if (FD_ISSET(rcvsock, &fds))
+		sock = rcvsock;
+	    else
+		sock = rcvsock6;
+
+	    if ((host = receive(hosts, numhosts, sock)) != NULL)
+		return host;
 	}
     }
     
@@ -953,6 +1274,7 @@ static HostData *packet_ok(HostData *hosts, int numhosts,
     struct icmp *icp;
     HostData *host;
     int hcount;
+    struct sockaddr_in *haddr;
 
     ip = (struct ip *) buf;
     hlen = ip->ip_hl << 2;
@@ -980,11 +1302,13 @@ static HostData *packet_ok(HostData *hosts, int numhosts,
 	
 	for (hcount = 0, host = hosts; hcount < numhosts; hcount++, host++)
 	{
-	    if (host->invalid) continue;
+	    if (host->invalid || host->addr.ss_family != AF_INET) continue;
+
+	    haddr = (struct sockaddr_in *)&host->addr;
 
             /* Valid ICMP echo reply packet */
             if ( type == ICMP_ECHOREPLY &&
-                 ip->ip_src.s_addr == host->addr.sin_addr.s_addr &&
+                 ip->ip_src.s_addr == haddr->sin_addr.s_addr &&
                  icp->icmp_id == htons(ident) && 
                  icp->icmp_seq == htons(host->seq) )
             {
@@ -993,7 +1317,7 @@ static HostData *packet_ok(HostData *hosts, int numhosts,
             }
             /* Time exceeded reply to an ICMP echo request */
             if ( type == ICMP_TIMXCEED &&
-                 hip->ip_dst.s_addr == host->addr.sin_addr.s_addr &&
+                 hip->ip_dst.s_addr == haddr->sin_addr.s_addr &&
                  hip->ip_id == htons(ident+host->seq) )
             {
 		host->code = -1; 
@@ -1004,7 +1328,7 @@ static HostData *packet_ok(HostData *hosts, int numhosts,
 	    if (hlen + 12 <= cc && hip->ip_p == IPPROTO_UDP &&
 		up->uh_sport == htons(ident) &&
 		up->uh_dport == htons(port + host->seq) &&
-		hip->ip_dst.s_addr == host->addr.sin_addr.s_addr)
+		hip->ip_dst.s_addr == haddr->sin_addr.s_addr)
 	    {
 		host->code = (type == ICMP_TIMXCEED ? -1 : code + 1);
 		return host;
@@ -1014,6 +1338,104 @@ static HostData *packet_ok(HostData *hosts, int numhosts,
 
     if (verbose >= 3)
         fprintf(stderr, "received an unknown packet!\n"); 
+    return NULL;
+}
+
+static HostData *packet6_ok(HostData *hosts, int numhosts,
+				  u_char * buf, int cc,
+				  struct sockaddr_in6 *from)
+{
+    u_char type, code;
+    struct icmp6_hdr *icp;
+    HostData *host;
+    int hcount;
+
+    if (cc < sizeof(struct icmp6_hdr))
+	return NULL;
+
+    icp = (struct icmp6_hdr *) buf;
+
+    type = icp->icmp6_type;
+    code = icp->icmp6_code;
+
+    if (verbose >= 5)
+    {
+	char txt[INET6_ADDRSTRLEN];
+        fprintf(stderr, "Received ICMP6 type: %i, code: %i, from %s\n", type, code,
+		inet_ntop(AF_INET6, &from->sin6_addr, txt, sizeof(txt)) );
+    }
+
+    if ((type == ICMP6_TIME_EXCEEDED && code == ICMP6_TIME_EXCEED_TRANSIT)
+	|| type == ICMP6_DST_UNREACH || type == ICMP6_ECHO_REPLY )
+    {
+	struct ip6_hdr *hip;
+	int invoke_len;
+
+	hip = (struct ip6_hdr *) (icp + 1);
+
+	if (type != ICMP6_ECHO_REPLY)
+	{
+	    if (cc < (sizeof(struct icmp6_hdr) + sizeof(struct ip6_hdr)))
+		return NULL;
+
+	    /* Check packet is as big as the following code assumes */
+	    switch (hip->ip6_nxt)
+	    {
+	    case IPPROTO_ICMPV6:
+		invoke_len = sizeof(struct icmp6_hdr);
+		break;
+	    case IPPROTO_UDP:
+		invoke_len = sizeof(struct udphdr);
+		break;
+	    default:
+		return NULL;
+	    };
+
+	    if (cc < (sizeof(struct icmp6_hdr) + sizeof(struct ip6_hdr) + invoke_len))
+		return NULL;
+	}
+
+	for (hcount = 0, host = hosts; hcount < numhosts; hcount++, host++)
+	{
+	    struct sockaddr_in6 *haddr;
+
+	    if (host->invalid || host->addr.ss_family != AF_INET6) continue;
+
+	    haddr = (struct sockaddr_in6 *)&host->addr;
+
+            /* Valid ICMP echo reply packet */
+            if ( type == ICMP6_ECHO_REPLY &&
+		 in6_addr_cmp(&from->sin6_addr, &haddr->sin6_addr) == 0 &&
+                 icp->icmp6_id == htons(ident) &&
+                 icp->icmp6_seq == htons(host->seq) )
+            {
+		host->code = ICMP6_DST_UNREACH_NOPORT + 1; /* Behave like if a UDP packet was received even though we used ICMP */
+		return host;
+            }
+            /* Time exceeded reply to an ICMP echo request */
+            if ( type == ICMP6_TIME_EXCEEDED &&
+		 hip->ip6_nxt == IPPROTO_ICMPV6 &&
+                 in6_addr_cmp(&hip->ip6_dst, &haddr->sin6_addr) == 0 &&
+		 ((struct icmp6_hdr *)(hip + 1))->icmp6_id == htons(ident+host->seq) )
+	    {
+		host->code = -1;
+		return host;
+	    }
+
+            /* Valid reply to an UDP probe packet */
+	    if ( hip->ip6_nxt == IPPROTO_UDP &&
+		 in6_addr_cmp(&hip->ip6_dst, &haddr->sin6_addr) == 0 &&
+		 ((struct udphdr *)(hip + 1))->uh_sport == htons(ident) &&
+		 ((struct udphdr *)(hip + 1))->uh_dport == htons(port + host->seq) )
+	    {
+		host->code = (type == ICMP6_TIME_EXCEEDED ? -1 : code + 1);
+		return host;
+	    }
+	}
+    }
+
+    if (verbose >= 3)
+        fprintf(stderr, "received an unknown v6 packet!\n");
     return NULL;
 }
 
